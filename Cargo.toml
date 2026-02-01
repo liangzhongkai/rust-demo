@@ -1,0 +1,59 @@
+[workspace]
+members = [
+    # 核心概念
+    "crates/ownership",
+    "crates/borrowing",
+    "crates/lifetimes",
+    "crates/trait-system",
+    "crates/generics",
+
+    # 类型系统
+    "crates/smart-pointers",
+    "crates/interior-mutability",
+    "crates/type-coercion",
+    "crates/copy-vs-clone",
+
+    # 并发与异步
+    "crates/threads",
+    "crates/channels",
+    "crates/mutex-locks",
+    "crates/async-runtime",
+    "crates/cancellation",
+
+    # 错误处理
+    "crates/result-option",
+    "crates/error-propagation",
+    "crates/thiserror",
+    "crates/anyhow",
+
+    # 高级特性
+    "crates/closures",
+    "crates/iterators",
+    "crates/macros",
+    "crates/unsafe-rust",
+    "crates/ffi",
+
+    # 内存管理
+    "crates/stack-vs-heap",
+    "crates/arena-allocators",
+    "crates/custom-allocators",
+    "crates/reference-cycles",
+
+    # 模式匹配
+    "crates/pattern-matching",
+    "crates/guards-ranges",
+
+    # 实战应用
+    "crates/data-structures",
+    "crates/parsing",
+    "crates/networking",
+    "crates/file-io",
+
+    # 性能优化
+    "crates/zero-cost",
+    "crates/inline-caching",
+    "crates/simd",
+    "crates/profile-optimization",
+]
+
+resolver = "2"
