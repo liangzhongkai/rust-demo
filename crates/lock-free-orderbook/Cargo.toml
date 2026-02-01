@@ -1,0 +1,11 @@
+[package]
+name = "lock-free-orderbook"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bumpalo = "3.16"
+crossbeam = "0.8"
+
+# 用于缓存行对齐
+parking_lot = "0.12"

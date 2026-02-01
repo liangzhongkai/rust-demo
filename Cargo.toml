@@ -54,6 +54,12 @@ members = [
     "crates/inline-caching",
     "crates/simd",
     "crates/profile-optimization",
+
+    # Web3 & HFT 实战
+    "crates/mev-simulator",
+    "crates/lock-free-orderbook",
+    "crates/zero-copy-parser",
+    "crates/merkle-patricia",
 ]
 
 resolver = "2"
