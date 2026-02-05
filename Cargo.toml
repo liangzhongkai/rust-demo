@@ -55,11 +55,13 @@ members = [
     "crates/simd",
     "crates/profile-optimization",
 
-    # Web3 & HFT 实战
+    # Web3
     "crates/mev-simulator",
+    "crates/merkle-patricia",
+
+    # HFT
     "crates/lock-free-orderbook",
     "crates/zero-copy-parser",
-    "crates/merkle-patricia",
 ]
 
 resolver = "2"
