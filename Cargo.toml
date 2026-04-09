@@ -62,6 +62,9 @@ members = [
     # HFT
     "crates/lock-free-orderbook",
     "crates/zero-copy-parser",
+    
+    # 案例
+    "crates/01-rcli",
 ]
 
 resolver = "2"
