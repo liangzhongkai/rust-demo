@@ -11,8 +11,6 @@
 
 use bytes::{Buf, Bytes, BytesMut};
 use std::borrow::Cow;
-use std::fs::File;
-use std::io::Read;
 
 /// 使用 memchr 快速查找字节
 /// memchr 使用 SIMD 指令加速，比手动循环快 10-100 倍
@@ -217,8 +215,7 @@ impl<'a> BinaryParser<'a> {
         let bytes = &self.data[self.position..self.position + 8];
         self.position += 8;
         Some(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
@@ -243,8 +240,7 @@ impl<'a> BinaryParser<'a> {
 
     /// 查找字节位置（不移动位置）
     fn find_byte(&self, byte: u8) -> Option<usize> {
-        memchr(byte, &self.data[self.position..])
-            .map(|pos| self.position + pos)
+        memchr(byte, &self.data[self.position..]).map(|pos| self.position + pos)
     }
 }
 
@@ -400,12 +396,12 @@ fn main() {
     binary_msg.extend_from_slice(&1234u32.to_le_bytes()); // instrument_id
     binary_msg.extend_from_slice(&2u16.to_le_bytes()); // bid_count
     binary_msg.extend_from_slice(&2u16.to_le_bytes()); // ask_count
-    // bids
+                                                       // bids
     binary_msg.extend_from_slice(&1000000u64.to_le_bytes()); // price
     binary_msg.extend_from_slice(&100u64.to_le_bytes()); // qty
     binary_msg.extend_from_slice(&999000u64.to_le_bytes()); // price
     binary_msg.extend_from_slice(&50u64.to_le_bytes()); // qty
-    // asks
+                                                        // asks
     binary_msg.extend_from_slice(&1001000u64.to_le_bytes()); // price
     binary_msg.extend_from_slice(&150u64.to_le_bytes()); // qty
     binary_msg.extend_from_slice(&1002000u64.to_le_bytes()); // price
@@ -475,7 +471,10 @@ fn main() {
     println!("Parsed {} messages", parsed_count);
     println!("Zero-copy parse: {:?}", zero_copy_time);
     println!("Copy-based parse: {:?}", copy_time);
-    println!("Speedup: {:.2}x", copy_time.as_nanos() as f64 / zero_copy_time.as_nanos() as f64);
+    println!(
+        "Speedup: {:.2}x",
+        copy_time.as_nanos() as f64 / zero_copy_time.as_nanos() as f64
+    );
 }
 
 #[cfg(test)]

@@ -41,11 +41,7 @@ pub fn demonstrate() {
     *child.parent.borrow_mut() = Rc::downgrade(&root);
     println!(
         "  Weak 指父: child→parent name = {:?}",
-        child
-            .parent
-            .borrow()
-            .upgrade()
-            .map(|p| p.name.clone())
+        child.parent.borrow().upgrade().map(|p| p.name.clone())
     );
     drop(root);
     println!(
