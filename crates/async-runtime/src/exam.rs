@@ -19,7 +19,8 @@ pub fn print_section_1_executor_model() {
     println!("  现象：用「一线程一连接」模型，内存与线程切换成本暴涨。");
     println!("  问：为何 async + 事件驱动更合适？代价是什么？\n");
     println!("  ❌ 问题代码（一线程一连接）:");
-    println!(r#"
+    println!(
+        r#"
     fn handle_connections(listener: TcpListener) {{
         for stream in listener.incoming() {{
             std::thread::spawn(move || {{    // 每连接一个 OS 线程
@@ -33,9 +34,11 @@ pub fn print_section_1_executor_model() {
         }}
     }}
     // 10 万连接 = 10 万线程 ≈ 800MB 纯栈内存 + 巨大的上下文切换成本
-"#);
+"#
+    );
     println!("  ✅ 改进方案（async + 事件驱动）:");
-    println!(r#"
+    println!(
+        r#"
     async fn handle_connections(listener: TcpListener) {{
         loop {{
             let (stream, _) = listener.accept().await.unwrap();
@@ -50,7 +53,8 @@ pub fn print_section_1_executor_model() {
         }}
     }}
     // 10 万连接 ≈ 几十 MB；OS 线程仅需 CPU 核数量级
-"#);
+"#
+    );
     println!("  权衡：吞吐/延迟 vs 编程复杂度、调试难度、取消与背压要显式设计。");
     println!("  泛化：I/O 密集、大量并发会话 → 复用少量 OS 线程 + 非阻塞 I/O；");
     println!("        把「一个会话」建模为状态机/Future，而不是一线程。\n");
@@ -60,15 +64,18 @@ pub fn print_section_1_executor_model() {
     println!("  现象：压缩占满执行线程时，轮询响应明显变慢。");
     println!("  问：根因是？如何避免把两类负载绑在同一调度语义上？\n");
     println!("  ❌ 问题代码（CPU 密集任务占住 executor 线程）:");
-    println!(r#"
+    println!(
+        r#"
     async fn handle_upload(image: Bytes) -> Response {{
         // 直接在 async 上下文做 CPU 密集操作 —— 阻塞 executor 线程！
         let compressed = lz4::compress(&image);  // 可能跑 50ms+
         save_to_s3(compressed).await
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（隔离 CPU 工作到专用线程池）:");
-    println!(r#"
+    println!(
+        r#"
     async fn handle_upload(image: Bytes) -> Response {{
         // spawn_blocking 把 CPU 工作卸载到专用阻塞线程池
         let compressed = tokio::task::spawn_blocking(move || {{
@@ -88,7 +95,8 @@ pub fn print_section_1_executor_model() {
         let compressed = rx.await.unwrap();
         save_to_s3(compressed).await
     }}
-"#);
+"#
+    );
     println!("  权衡：合作式调度友好于 I/O，但对长计算不友好；拆线程池有边界成本。");
     println!("  泛化：识别 CPU-bound 段 → 隔离到专用线程池或进程；");
     println!("        async 任务内避免长时间不占 yield 点的计算循环。\n");
@@ -98,16 +106,19 @@ pub fn print_section_1_executor_model() {
     println!("  现象：某些 worker 队列堆积，尾延迟升高。");
     println!("  问：调度层面可能出什么问题？除「别在 async 里算太久」外还有什么手段？\n");
     println!("  ❌ 问题代码（所有任务共享一个 runtime）:");
-    println!(r#"
+    println!(
+        r#"
     #[tokio::main]
     async fn main() {{
         // 延迟敏感的 API 请求和批处理报表混在同一个 runtime
         tokio::spawn(api_server());         // 需要 p99 < 10ms
         tokio::spawn(batch_report_job());   // 每批处理耗时 500ms+
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（按 SLA 分 runtime + 信号量限并发）:");
-    println!(r#"
+    println!(
+        r#"
     fn main() {{
         // 延迟敏感 runtime
         let rt_api = tokio::runtime::Builder::new_multi_thread()
@@ -127,7 +138,8 @@ pub fn print_section_1_executor_model() {
         // 或者用 Semaphore 限制批处理并发度
         // let batch_permits = Arc::new(Semaphore::new(2));
     }}
-"#);
+"#
+    );
     println!("  权衡：全局公平性 vs 局部缓存友好；分池/优先级会增复杂度和饿死风险。");
     println!("  泛化：按 SLA 分池（latency-sensitive vs batch）、限并发（信号量）、");
     println!("        对重任务用独立 executor 或批处理队列。\n");
@@ -145,7 +157,8 @@ pub fn print_section2_send_blocking() {
     println!("  现象：同线程上其它任务全部卡住。");
     println!("  问：与「在阻塞线程池里做」相比，边界在哪里？\n");
     println!("  ❌ 问题代码（在 async 里调阻塞 API）:");
-    println!(r#"
+    println!(
+        r#"
     async fn poll_external_api() {{
         loop {{
             let data = reqwest::get("https://api.example.com").await;
@@ -153,9 +166,11 @@ pub fn print_section2_send_blocking() {
             std::thread::sleep(Duration::from_secs(5)); // 阻塞整个 executor 线程 5 秒！
         }}
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案:");
-    println!(r#"
+    println!(
+        r#"
     async fn poll_external_api() {{
         loop {{
             let data = reqwest::get("https://api.example.com").await;
@@ -170,7 +185,8 @@ pub fn print_section2_send_blocking() {
             legacy_sync_db::execute(&query)  // 阻塞操作在专用线程池里
         }}).await?
     }}
-"#);
+"#
+    );
     println!("  权衡：简单阻塞 API vs 占用 executor 线程；线程池有线程数与排队上限。");
     println!("  泛化：在 async 上下文只用非阻塞/异步 API；");
     println!("        不可避免的阻塞 → 专用 blocking 池并设超时与队列监控。\n");
@@ -180,7 +196,8 @@ pub fn print_section2_send_blocking() {
     println!("  现象：编译报错或（若勉强通过）运行时数据竞争风险。");
     println!("  问：`Send` 约束在「多线程 runtime」里解决什么问题？\n");
     println!("  ❌ 问题代码（!Send 类型跨 await）:");
-    println!(r#"
+    println!(
+        r#"
     use std::rc::Rc;
     use std::cell::RefCell;
 
@@ -190,9 +207,11 @@ pub fn print_section2_send_blocking() {
         cache.borrow_mut().extend(new_data);     // ← 此时 Rc 已被移到别的线程 → UB!
     }}
     // 编译器报错：future is not `Send` — cannot be spawned on multi-thread runtime
-"#);
+"#
+    );
     println!("  ✅ 改进方案:");
-    println!(r#"
+    println!(
+        r#"
     // 方案 A：用 Arc + tokio::sync::Mutex（跨 await 安全）
     async fn update_cache(cache: Arc<tokio::sync::Mutex<HashMap<String, String>>>) {{
         let new_data = fetch_remote().await;
@@ -210,7 +229,8 @@ pub fn print_section2_send_blocking() {
     local.run_until(async {{
         tokio::task::spawn_local(update_cache_with_rc(rc_cache)).await;
     }}).await;
-"#);
+"#
+    );
     println!("  权衡：`Arc<Mutex<T>>` / `tokio::sync::Mutex` vs `Send` 全链路成本。");
     println!("  泛化：跨 await 的状态须满足「可在线程间迁移」或固定在单线程任务域；");
     println!("        `!Send` 逻辑用 `LocalSet`/单线程 runtime 或消息传递到 owning 任务。\n");
@@ -220,18 +240,21 @@ pub fn print_section2_send_blocking() {
     println!("  现象：死锁或极差的并发度（视 runtime 与锁竞争而定）。");
     println!("  问：与 async-aware mutex 的差异？\n");
     println!("  ❌ 问题代码（std Mutex guard 跨 await）:");
-    println!(r#"
+    println!(
+        r#"
     async fn bad_update(state: Arc<std::sync::Mutex<State>>) {{
         let mut guard = state.lock().unwrap();  // 获取 std::sync::MutexGuard
         let enriched = fetch_enrichment(guard.id).await; // guard 跨 await 持有！
-        //                                       ^^^^^ 
+        //                                       ^^^^^
         // 此线程被阻塞在 await → 其它 task 若在同线程试图 lock → 死锁
         // 即使不死锁，guard 在整个 I/O 期间持有 → 极差并发度
         guard.data = enriched;
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案:");
-    println!(r#"
+    println!(
+        r#"
     // 方案 A：缩短持锁区间，不跨 await
     async fn good_update(state: Arc<std::sync::Mutex<State>>) {{
         let id = state.lock().unwrap().id;      // 短暂持锁，拷贝所需数据
@@ -247,7 +270,8 @@ pub fn print_section2_send_blocking() {
         guard.data = enriched;
         // 注意：持锁期间其他 task 的 .lock().await 会排队，但不死锁
     }}
-"#);
+"#
+    );
     println!("  权衡：std 锁轻但在 async 里易踩坑；async 锁可 await 但有额外调度成本。");
     println!("  泛化：临界区尽量不含 await；必须跨 await 共享 → 用 async mutex 或 actor；");
     println!("        缩短持锁时间，避免在锁内等 I/O。\n");
@@ -264,15 +288,18 @@ pub fn print_section3_cancellation_backpressure() {
     println!("【题 3.1】客户端断开 TCP，但服务端任务仍在读下游、占连接池槽位。");
     println!("  问：如何与「取消」绑定？取消后资源清理顺序要注意什么？\n");
     println!("  ❌ 问题代码（客户端断开后任务继续跑）:");
-    println!(r#"
+    println!(
+        r#"
     async fn handle_request(req: Request) -> Response {{
         let db_result = db.query("SELECT ...").await;    // 客户端已走，仍占 DB 连接
         let enriched = call_downstream(db_result).await; // 继续调下游，浪费资源
         Response::ok(enriched)                           // 返回值无人接收
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（取消传播 + Drop 资源清理）:");
-    println!(r#"
+    println!(
+        r#"
     async fn handle_request(req: Request, cancel: CancellationToken) -> Response {{
         // select! 在客户端断开（cancel）时自动 drop 未完成分支
         tokio::select! {{
@@ -296,17 +323,21 @@ pub fn print_section3_cancellation_backpressure() {
             self.conn.return_to_pool(); // 无论 cancel 还是正常完成都归还
         }}
     }}
-"#);
+"#
+    );
     println!("  权衡：协作式取消（poll 间检查）vs 强制中止；后者易留下不一致状态。");
     println!("  泛化：用 `select!`/drop future/显式 cancel token 传播；");
-    println!("        `JoinHandle::abort` 只作最后手段；关键资源用 `Drop`/`scopeguard` 保证释放。\n");
+    println!(
+        "        `JoinHandle::abort` 只作最后手段；关键资源用 `Drop`/`scopeguard` 保证释放。\n"
+    );
 
     // ── 3.2 ──
     println!("【题 3.2】无界 channel 接收慢、生产端 `send` 永不阻塞。");
     println!("  现象：内存持续上涨，最终 OOM。");
     println!("  问：背压应落在哪一层？有界 channel 的 trade-off？\n");
     println!("  ❌ 问题代码（无界 channel 无背压）:");
-    println!(r#"
+    println!(
+        r#"
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
     // 生产者：高速写入，永不阻塞
@@ -323,9 +354,11 @@ pub fn print_section3_cancellation_backpressure() {
             expensive_process(event).await;  // 处理速度 < 生产速度 → 队列无限增长
         }}
     }});
-"#);
+"#
+    );
     println!("  ✅ 改进方案（有界 channel + 背压）:");
-    println!(r#"
+    println!(
+        r#"
     // 有界 channel：生产者满了会 await，天然背压
     let (tx, mut rx) = tokio::sync::mpsc::channel(1000);  // 容量 1000
 
@@ -348,7 +381,8 @@ pub fn print_section3_cancellation_backpressure() {
             drop(permit);  // 完成后释放许可
         }});
     }}
-"#);
+"#
+    );
     println!("  权衡：反压到上游（慢下来）vs 丢包/采样；有界队列会阻塞或需处理 `send` 失败。");
     println!("  泛化：默认可背压边界（有界队列、semaphore、rate limit）；");
     println!("        监控队列深度与任务数，把「无限缓冲」视为设计缺陷。\n");
@@ -358,7 +392,8 @@ pub fn print_section3_cancellation_backpressure() {
     println!("  现象：线程/任务堆积，雪崩。");
     println!("  问：超时与取消如何配合重试与幂等？\n");
     println!("  ❌ 问题代码（无超时 + 无限重试）:");
-    println!(r#"
+    println!(
+        r#"
     async fn call_payment(order: &Order) -> Result<Receipt> {{
         loop {{
             match payment_client.charge(order).await {{  // 无超时！下游卡住就永远等
@@ -367,9 +402,11 @@ pub fn print_section3_cancellation_backpressure() {
             }}
         }}
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（超时 + 指数退避 + 幂等）:");
-    println!(r#"
+    println!(
+        r#"
     async fn call_payment(order: &Order) -> Result<Receipt> {{
         let mut backoff = Duration::from_millis(100);
         let max_retries = 3;
@@ -396,7 +433,8 @@ pub fn print_section3_cancellation_backpressure() {
         }}
         unreachable!()
     }}
-"#);
+"#
+    );
     println!("  权衡：过早超时误杀 vs 过长超时拖垮系统；重试放大负载。");
     println!("  泛化：每层 I/O 设 deadline；重试带 jitter 与上限；幂等键与熔断。\n");
 }
@@ -412,7 +450,8 @@ pub fn print_section4_runtime_choice() {
     println!("【题 4.1】库作者：是否应在库内 `#[tokio::main]` 或隐式启动 runtime？");
     println!("  问：对二进制作者与测试的影响？\n");
     println!("  ❌ 问题代码（库里偷偷起 runtime）:");
-    println!(r#"
+    println!(
+        r#"
     // my_lib/src/lib.rs
     pub fn fetch_config() -> Config {{
         // 库自己创建 runtime → 用户的 runtime 里调用会 panic（嵌套 runtime）
@@ -421,9 +460,11 @@ pub fn print_section4_runtime_choice() {
             reqwest::get("https://config.example.com").await.unwrap().json().await.unwrap()
         }})
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（库暴露 async fn，由应用控制 runtime）:");
-    println!(r#"
+    println!(
+        r#"
     // my_lib/src/lib.rs — 库只暴露 async 接口
     pub async fn fetch_config() -> Result<Config> {{
         let resp = reqwest::get("https://config.example.com").await?;
@@ -442,7 +483,8 @@ pub fn print_section4_runtime_choice() {
         let config = my_lib::fetch_config().await.unwrap();
         assert_eq!(config.version, 1);
     }}
-"#);
+"#
+    );
     println!("  权衡：开箱即用 vs 与用户选定 runtime 冲突、嵌套 runtime。");
     println!("  泛化：库暴露 `async fn` + 可选 rt 特性；由应用统一选 executor；");
     println!("        测试可用 `current_thread` 或用户提供的 handle。\n");
@@ -451,7 +493,8 @@ pub fn print_section4_runtime_choice() {
     println!("【题 4.2】嵌入式或严格 no_std 场景需要异步。");
     println!("  问：完整 futures + 生态 runtime 与「自研最小 executor」如何选？\n");
     println!("  代码示例（最小 executor：单线程轮询）:");
-    println!(r#"
+    println!(
+        r#"
     // 不依赖 tokio/async-std，仅用 core::future + 手写 executor
     use core::future::Future;
     use core::task::{{Context, Poll, RawWaker, RawWakerVTable, Waker}};
@@ -476,7 +519,8 @@ pub fn print_section4_runtime_choice() {
             }}
         }}
     }}
-"#);
+"#
+    );
     println!("  权衡：功能与安全审计成本 vs 维护负担与边界情况。");
     println!("  泛化：先明确并发模型（单线程轮询即可？）；");
     println!("        再选最小依赖集；文档写明 `Send`/时钟/IO 资源假设。\n");
@@ -486,7 +530,8 @@ pub fn print_section4_runtime_choice() {
     println!("  现象：Timer、Spawn、IO trait 不兼容；集成测试需要两套 setup。");
     println!("  问：混用 runtime 为何危险？依赖冲突的根源在哪里？\n");
     println!("  ❌ 问题代码（跨 runtime 调度）:");
-    println!(r#"
+    println!(
+        r#"
     // tokio runtime 里用 async-std 的 sleep —— timer 永远不会触发！
     #[tokio::main]
     async fn main() {{
@@ -496,9 +541,11 @@ pub fn print_section4_runtime_choice() {
         // 但此时跑的是 tokio 的 reactor → timer 永远 Pending
         println!("this may never print");
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案:");
-    println!(r#"
+    println!(
+        r#"
     // 统一使用一个 runtime 的 API
     #[tokio::main]
     async fn main() {{
@@ -509,7 +556,8 @@ pub fn print_section4_runtime_choice() {
     // 若必须用跨 runtime 的库，用 async-compat 垫片（理解其代价）：
     // use async_compat::CompatExt;
     // some_async_std_future.compat().await;  // 在 tokio 上下文运行 async-std future
-"#);
+"#
+    );
     println!("  权衡：「全站一 runtime」简单但锁定生态；抽象层（如 async-compat）增间接。");
     println!("  泛化：选定一个主 runtime 并在 CI 锁死；");
     println!("        对第三方库看它依赖哪个 runtime trait——不兼容时优先换库而非垫片。\n");
@@ -527,16 +575,19 @@ pub fn print_section5_structured_concurrency() {
     println!("  现象：任务里 panic 了，日志里只有 runtime 层一行 warning，主逻辑浑然不知。");
     println!("  问：谁负责观察子任务的结果？不 await JoinHandle 会丢失什么？\n");
     println!("  ❌ 问题代码（fire-and-forget）:");
-    println!(r#"
+    println!(
+        r#"
     async fn handle_order(order: Order) {{
         // JoinHandle 被丢弃，子任务的 panic/error 无人收集
         tokio::spawn(send_notification(order.user_id));  // 如果 panic → 静默丢失
         tokio::spawn(update_analytics(order.id));         // 如果出错 → 无人知晓
         // 主逻辑继续，不知道后台任务是否成功
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（JoinSet 收集 + 监控）:");
-    println!(r#"
+    println!(
+        r#"
     async fn handle_orders(mut rx: Receiver<Order>) {{
         let mut tasks = tokio::task::JoinSet::new();
 
@@ -565,7 +616,8 @@ pub fn print_section5_structured_concurrency() {
             if let Err(e) = result {{ tracing::error!("shutdown: task error: {{e}}"); }}
         }}
     }}
-"#);
+"#
+    );
     println!("  权衡：spawn 解耦、响应快 vs 错误黑洞、泄漏无约束任务数。");
     println!("  泛化：凡 spawn 必须有人 join 或监控；");
     println!("        用 JoinSet / TaskTracker 收集句柄；设 panic hook 保底上报。\n");
@@ -575,7 +627,8 @@ pub fn print_section5_structured_concurrency() {
     println!("  现象：用 `futures::future::join_all` 一次发 50 个 Future。");
     println!("  问：join_all vs spawn+JoinSet 差异？一个子任务 panic/超时如何影响整体？\n");
     println!("  方案对比:");
-    println!(r#"
+    println!(
+        r#"
     // 方案 A：join_all — 在同一 task 内轮询所有 future
     async fn fan_out_join_all(urls: Vec<String>) -> Vec<Response> {{
         let futures: Vec<_> = urls.iter()
@@ -617,7 +670,8 @@ pub fn print_section5_structured_concurrency() {
             .buffer_unordered(10)   // 最多 10 个同时执行
             .collect().await
     }}
-"#);
+"#
+    );
     println!("  权衡：join_all 在同一 task 里轮询——无并行上限、难以单独取消；");
     println!("        spawn 每个得到独立 task，但句柄管理成本上升。");
     println!("  泛化：少量无 I/O 依赖的 Future → join_all 简洁；");
@@ -629,7 +683,8 @@ pub fn print_section5_structured_concurrency() {
     println!("  场景：分支 A 已向下游发了写请求，但 B 先完成，A 被 drop。");
     println!("  问：被 drop 的 Future 停在哪？副作用回滚谁负责？\n");
     println!("  ❌ 问题代码（select 非 cancel-safe 的 Future）:");
-    println!(r#"
+    println!(
+        r#"
     async fn write_with_timeout(db: &Database, data: Data) -> Result<()> {{
         tokio::select! {{
             result = async {{
@@ -643,9 +698,11 @@ pub fn print_section5_structured_concurrency() {
             }}
         }}
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（spawn 隔离副作用 + oneshot 回传）:");
-    println!(r#"
+    println!(
+        r#"
     // 方案 A：把有副作用的操作 spawn 出去，保证完成
     async fn write_with_timeout(db: Database, data: Data) -> Result<()> {{
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -675,7 +732,8 @@ pub fn print_section5_structured_concurrency() {
         }}).await.map_err(|_| anyhow!("timeout"))?
         // timeout 会 drop 整个 future，但数据库连接的 Drop impl 应保证 rollback
     }}
-"#);
+"#
+    );
     println!("  权衡：select! 提供延迟最优路径，代价是 cancel-safety 要求。");
     println!("  泛化：只 select! cancel-safe 的 Future（无不可逆副作用直到完成）；");
     println!("        写操作需幂等或先在 spawn 里跑完、用 oneshot 回传结果；");
@@ -686,7 +744,8 @@ pub fn print_section5_structured_concurrency() {
     println!("  现象：其中一个失败后，其余继续跑完才返回错误，浪费时间。");
     println!("  问：如何做到「一失败全停」的 fail-fast 语义？\n");
     println!("  ❌ 问题代码（join_all 不 fail-fast）:");
-    println!(r#"
+    println!(
+        r#"
     async fn init_all() -> Result<()> {{
         let results = futures::future::join_all(vec![
             init_db_pool(),         // 成功，但要等其他全完成
@@ -697,9 +756,11 @@ pub fn print_section5_structured_concurrency() {
         for r in results {{ r?; }}
         Ok(())
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（try_join! fail-fast / JoinSet abort_all）:");
-    println!(r#"
+    println!(
+        r#"
     // 方案 A：tokio::try_join! — 第一个 Err 即返回，其余被 drop
     async fn init_all() -> Result<()> {{
         tokio::try_join!(
@@ -733,7 +794,8 @@ pub fn print_section5_structured_concurrency() {
         }}
         Ok(())
     }}
-"#);
+"#
+    );
     println!("  权衡：try_join! 失败即返回但会 drop 其余 Future；spawn 需显式 abort。");
     println!("  泛化：用 `try_join!` / `try_join_all` 做 fail-fast；");
     println!("        需要清理逻辑时用 JoinSet + 收到首个 Err 后 abort_all()；");
@@ -752,7 +814,8 @@ pub fn print_section6_pin_future_perf() {
     println!("  现象：Future 本体超大，spawn 时堆分配压力上升；嵌套调用导致 Future 指数膨胀。");
     println!("  问：async fn 编译后的状态机大小由什么决定？如何缩减？\n");
     println!("  ❌ 问题代码（大缓冲区跨 await）:");
-    println!(r#"
+    println!(
+        r#"
     async fn process_file(path: &str) -> Result<()> {{
         let mut buf = [0u8; 16384];  // 16KB 栈上数组 → 编入 Future 状态机
         let file = File::open(path).await?;
@@ -763,9 +826,11 @@ pub fn print_section6_pin_future_perf() {
     // 嵌套调用 process_file → 外层 Future 包含内层 16KB → 递归放大
     println!("size = {{}}", std::mem::size_of_val(&process_file("a.txt")));
     // 可能打印：size = 16544（远超预期）
-"#);
+"#
+    );
     println!("  ✅ 改进方案:");
-    println!(r#"
+    println!(
+        r#"
     async fn process_file(path: &str) -> Result<()> {{
         // 方案 A：用 Vec 分配到堆上，Future 只存一个指针（8 bytes）
         let mut buf = vec![0u8; 16384];
@@ -790,7 +855,8 @@ pub fn print_section6_pin_future_perf() {
     // 排查工具：
     let fut = process_file("test.txt");
     println!("Future size: {{}} bytes", std::mem::size_of_val(&fut));
-"#);
+"#
+    );
     println!("  权衡：栈上缓冲零分配 vs Future 体积；Box 缓冲多一次分配但 Future 瘦小。");
     println!("  泛化：跨 await 持有的局部变量全部计入状态机大小；");
     println!("        大缓冲区用 Vec / Box<[u8]>；把不跨 await 的局部量提到独立作用域；");
@@ -801,7 +867,8 @@ pub fn print_section6_pin_future_perf() {
     println!("  现象：编译报错「recursive async fn has infinite size」。");
     println!("  问：为什么同步递归可以但 async 递归不行？`Box::pin` 在这里做什么？\n");
     println!("  ❌ 问题代码（直接 async 递归）:");
-    println!(r#"
+    println!(
+        r#"
     struct Node {{
         val: i32,
         children: Vec<Node>,
@@ -816,9 +883,11 @@ pub fn print_section6_pin_future_perf() {
         total
     }}
     // error[E0733]: recursion in an async fn requires boxing
-"#);
+"#
+    );
     println!("  ✅ 改进方案:");
-    println!(r#"
+    println!(
+        r#"
     // 方案 A：Box::pin 打断编译期大小推导
     fn sum_tree(node: &Node) -> Pin<Box<dyn Future<Output = i32> + '_>> {{
         Box::pin(async move {{
@@ -849,7 +918,8 @@ pub fn print_section6_pin_future_perf() {
     //   }}
     // Box::pin 后：
     //   State1 {{ node, total, child_future: Pin<Box<dyn Future>> }}  // 固定 8 字节
-"#);
+"#
+    );
     println!("  权衡：Box::pin 每层一次堆分配；改迭代+显式栈无分配但实现复杂。");
     println!("  泛化：async 递归 → `Box::pin(async move {{ ... }})` 打断编译期大小推导；");
     println!("        深递归场景优先改为迭代 + 手动栈；");
@@ -860,7 +930,8 @@ pub fn print_section6_pin_future_perf() {
     println!("  现象：`Vec<impl Future>` 不合法，需要 `Vec<Pin<Box<dyn Future>>>`。");
     println!("  问：类型擦除 + Pin + Box 三层嵌套解决什么问题？各自的成本？\n");
     println!("  代码对比:");
-    println!(r#"
+    println!(
+        r#"
     // ❌ 不合法：每个 async fn 返回不同大小的匿名类型
     // let tasks: Vec<impl Future<Output = ()>> = vec![
     //     fetch_users(),    // 类型 A
@@ -898,7 +969,8 @@ pub fn print_section6_pin_future_perf() {
     futs.push(fetch_users());
     futs.push(sync_inventory());  // 需要同类型 → 通常配合 Box::pin
     while let Some(()) = futs.next().await {{}}
-"#);
+"#
+    );
     println!("  权衡：静态分发（enum 枚举）零开销但封闭；dyn 灵活但有 vtable + 堆分配。");
     println!("  泛化：已知变体集合 → 手写 enum Future 消除分配；");
     println!("        变体开放/插件化 → `Pin<Box<dyn Future + Send>>`；");
@@ -909,7 +981,8 @@ pub fn print_section6_pin_future_perf() {
     println!("  场景：包装一个内部持有自引用（如 tokio::time::Sleep）的组合 Future。");
     println!("  问：Pin 防止什么操作？如果误用 `std::mem::swap` 会怎样？\n");
     println!("  代码示例（手写组合 Future + pin-project）:");
-    println!(r#"
+    println!(
+        r#"
     use pin_project_lite::pin_project;
     use std::future::Future;
     use std::pin::Pin;
@@ -949,7 +1022,8 @@ pub fn print_section6_pin_future_perf() {
     // std::mem::swap(&mut a, &mut b); // 内部 Sleep 有自引用指针
     //                                  // swap 后指针指向旧地址 → UB！
     // Pin 防止的正是这种 move 操作
-"#);
+"#
+    );
     println!("  权衡：Pin 保证 !Unpin 类型的内存地址不变，安全包装自引用；");
     println!("        但 API 表面复杂，pin-project 宏简化字段投影。");
     println!("  泛化：绝大多数应用代码用 async/await 自动获得正确 Pin 语义；");
@@ -969,7 +1043,8 @@ pub fn print_section7_graceful_shutdown() {
     println!("  现象：直接 `std::process::exit` → 客户端收到 RST，数据库事务回滚。");
     println!("  问：如何做到「不再接新请求 + 等存量完成 + 超时强杀」三步走？\n");
     println!("  ✅ 完整实现（三阶段 graceful shutdown）:");
-    println!(r#"
+    println!(
+        r#"
     use tokio_util::sync::CancellationToken;
 
     async fn run_server() {{
@@ -1014,7 +1089,8 @@ pub fn print_section7_graceful_shutdown() {
         }}
         tracing::info!("shutdown complete");
     }}
-"#);
+"#
+    );
     println!("  权衡：等待时间太长影响重启速度 vs 太短丢弃有效工作。");
     println!("  泛化：信号 → 标记停止监听 → drain 现有连接（设 deadline）→ 超时 abort；");
     println!("        Kubernetes：preStop hook + `terminationGracePeriodSeconds` 对齐。\n");
@@ -1024,7 +1100,8 @@ pub fn print_section7_graceful_shutdown() {
     println!("  现象：直接取消后台任务，缓存丢失最后一批写入。");
     println!("  问：后台任务如何感知「该退出了」并执行最终清理？\n");
     println!("  ❌ 问题代码（取消即丢数据）:");
-    println!(r#"
+    println!(
+        r#"
     async fn background_flush(buffer: Arc<Mutex<Vec<Event>>>) {{
         let mut interval = tokio::time::interval(Duration::from_secs(10));
         loop {{
@@ -1033,9 +1110,11 @@ pub fn print_section7_graceful_shutdown() {
             db.batch_insert(&events).await;   // 最后一批永远不会被 flush
         }}
     }}
-"#);
+"#
+    );
     println!("  ✅ 改进方案（感知取消 + final flush）:");
-    println!(r#"
+    println!(
+        r#"
     async fn background_flush(
         buffer: Arc<Mutex<Vec<Event>>>,
         cancel: CancellationToken,
@@ -1074,7 +1153,8 @@ pub fn print_section7_graceful_shutdown() {
         cancel.cancel();
         bg_handle.await.unwrap();  // 等 final flush 完成
     }}
-"#);
+"#
+    );
     println!("  权衡：select! + cancel token 简单，但需要 cancel-safe；");
     println!("        用 drop guard + oneshot 可以保证 flush 但增复杂度。");
     println!("  泛化：后台任务持有 CancellationToken，每个 tick 检查；");
@@ -1085,7 +1165,8 @@ pub fn print_section7_graceful_shutdown() {
     println!("  现象：LB 还在发流量给旧 Pod（健康检查间隔 10s），但旧 Pod 已关端口。");
     println!("  问：从「收到信号」到「进程退出」之间应做什么？\n");
     println!("  ✅ K8s 友好的 shutdown 时序:");
-    println!(r#"
+    println!(
+        r#"
     // Kubernetes Pod spec:
     // terminationGracePeriodSeconds: 60
     // lifecycle:
@@ -1125,7 +1206,8 @@ pub fn print_section7_graceful_shutdown() {
 
         tracing::info!("shutdown complete");
     }}
-"#);
+"#
+    );
     println!("  权衡：先下健康检查再 drain vs 直接断开；取决于 LB 实现与超时配置。");
     println!("  泛化：SIGTERM → 健康检查返回 unhealthy → 等一个检查周期 → drain →");
     println!("        超时退出；readiness 探针与 shutdown 状态联动；");
@@ -1144,7 +1226,8 @@ pub fn print_section8_async_trait_abstraction() {
     println!("  现象：Rust 1.75+ 原生支持 async fn in trait，但 `dyn Storage` 报错。");
     println!("  问：AFIT（Async Fn In Trait）在什么条件下可用 dyn dispatch？\n");
     println!("  代码对比:");
-    println!(r#"
+    println!(
+        r#"
     // ❌ AFIT 不支持 dyn dispatch
     trait Storage {{
         async fn get(&self, key: &str) -> Option<Vec<u8>>;
@@ -1189,7 +1272,8 @@ pub fn print_section8_async_trait_abstraction() {
             }}
         }}
     }}
-"#);
+"#
+    );
     println!("  权衡：静态 `impl Storage` 无堆分配但不能做 trait object；");
     println!("        boxing wrapper 灵活但有堆分配；enum dispatch 兼顾性能与灵活。");
     println!("  泛化：内部实现用泛型 `impl Storage` → 零成本；");
@@ -1201,7 +1285,8 @@ pub fn print_section8_async_trait_abstraction() {
     println!("  场景：HTTP middleware: logging → auth → rate-limit → handler，层数运行时决定。");
     println!("  问：tower `Service` trait 的设计为何不用 async fn？\n");
     println!("  代码示例:");
-    println!(r#"
+    println!(
+        r#"
     // tower Service trait（简化版）— 用关联类型 Future 实现静态分发
     trait Service<Request> {{
         type Response;
@@ -1234,7 +1319,8 @@ pub fn print_section8_async_trait_abstraction() {
         }}
         svc  // 每层一次 Box 分配 + vtable；hot path 无法内联
     }}
-"#);
+"#
+    );
     println!("  权衡：tower 用关联类型 Future → 静态分发、零分配；");
     println!("        但类型签名极长，Box 化简化类型但丧失内联优化。");
     println!("  泛化：层数编译期已知 → 泛型嵌套（自动单态化）；");
@@ -1246,7 +1332,8 @@ pub fn print_section8_async_trait_abstraction() {
     println!("  现象：调用方传入的 Future 可能是 `!Send`，spawn 时编译失败。");
     println!("  问：何时该加 `+ Send + 'static`？加了之后哪些合法 Future 被排除？\n");
     println!("  代码对比:");
-    println!(r#"
+    println!(
+        r#"
     // ❌ 过于宽松：无法 spawn 到多线程 runtime
     async fn run_task<F: Future<Output = ()>>(f: F) {{
         tokio::spawn(f);
@@ -1282,7 +1369,8 @@ pub fn print_section8_async_trait_abstraction() {
         println!("{{}}", s);           // 此 Future 含引用 → 不是 'static → 不能 spawn
     }}
     // 以上两种 Future 只能在当前 task await 或用 spawn_local
-"#);
+"#
+    );
     println!("  权衡：`Send + 'static` 使 spawn 安全但禁止借用局部引用和 !Send 类型；");
     println!("        放宽到 `spawn_local` 或 `LocalSet` 可兼容但限制了多线程。");
     println!("  泛化：对外 API 的 Future 参数默认 `Send + 'static`（兼容最多调用方式）；");
@@ -1302,7 +1390,8 @@ pub fn print_section9_observability_testing() {
     println!("  现象：p99 延迟偶尔飙到几百 ms，p50 正常；日志里无异常。");
     println!("  问：怀疑是「某个 task 占住 executor 线程太久」，如何验证？\n");
     println!("  ✅ 排查手段与代码:");
-    println!(r#"
+    println!(
+        r#"
     // 1) 用 tracing 标注 span，定位慢 poll
     use tracing::{{info_span, Instrument}};
     async fn handle_request(req: Request) -> Response {{
@@ -1336,7 +1425,8 @@ pub fn print_section9_observability_testing() {
             metrics::counter!("runtime.thread_park").increment(1);
         }})
         .build().unwrap();
-"#);
+"#
+    );
     println!("  权衡：tracing instrumentation 有采样成本；tokio-console 仅 dev 环境可用。");
     println!("  泛化：接入 `tracing` + `tracing-opentelemetry` 标注 span → 定位 slow poll；");
     println!("        开启 runtime metrics 看 worker busy/idle；");
@@ -1346,7 +1436,8 @@ pub fn print_section9_observability_testing() {
     println!("【题 9.2】async 代码 panic 后的栈回溯看不到业务调用链，全是 runtime 内部帧。");
     println!("  问：为什么 async 栈回溯与同步代码不同？如何恢复因果链？\n");
     println!("  问题示意:");
-    println!(r#"
+    println!(
+        r#"
     // 同步代码 panic 的栈回溯 — 完整调用链：
     // thread 'main' panicked at 'oh no'
     //   main::process_order    ← 业务代码清晰可见
@@ -1362,9 +1453,11 @@ pub fn print_section9_observability_testing() {
     //   tokio::runtime::task::harness::poll  ← 全是 runtime 内部
     //   tokio::runtime::scheduler::multi_thread::worker::Context::run_task
     // 看不到 process_order → validate_payment → charge_card 的因果链！
-"#);
+"#
+    );
     println!("  ✅ 用 tracing span 链恢复因果关系:");
-    println!(r#"
+    println!(
+        r#"
     use tracing::{{info_span, Instrument}};
 
     async fn process_order(order: Order) {{
@@ -1393,9 +1486,12 @@ pub fn print_section9_observability_testing() {
             .instrument(span)  // 子 task 继承父 span 上下文
         );
     }}
-"#);
+"#
+    );
     println!("  权衡：保留完整 async backtrace 有内存/性能成本；生产通常只保留 span 上下文。");
-    println!("  泛化：用 `tracing::Instrument` 给每个 spawn 附 span → 用 span 链代替 stack trace；");
+    println!(
+        "  泛化：用 `tracing::Instrument` 给每个 spawn 附 span → 用 span 链代替 stack trace；"
+    );
     println!("        关键路径 `.instrument(info_span!(\"request\", id = %req_id))`。\n");
 
     // ── 9.3 ──
@@ -1403,7 +1499,8 @@ pub fn print_section9_observability_testing() {
     println!("  现象：测试里 `tokio::time::sleep` 真的等了 30 秒，CI 慢到不可接受。");
     println!("  问：如何在测试中控制时间流逝？\n");
     println!("  ✅ 两种方案:");
-    println!(r#"
+    println!(
+        r#"
     // 方案 A：tokio 内置时间控制
     #[tokio::test(start_paused = true)]  // 启动时暂停时间
     async fn test_retry_on_timeout() {{
@@ -1458,7 +1555,8 @@ pub fn print_section9_observability_testing() {
         }}
         Err(anyhow!("max retries"))
     }}
-"#);
+"#
+    );
     println!("  权衡：`tokio::time::pause()` 简单但与真实 I/O 混用时有陷阱。");
     println!("  泛化：测试用 `#[tokio::test(start_paused = true)]` + `tokio::time::advance`；");
     println!("        把时钟抽象为 trait `Clock` 方便注入；");
@@ -1469,7 +1567,8 @@ pub fn print_section9_observability_testing() {
     println!("  现象：测试偶尔失败，本地跑 100 次也不稳定复现。");
     println!("  问：async 代码的非确定性源头有哪些？如何约束？\n");
     println!("  ✅ 三层防御:");
-    println!(r#"
+    println!(
+        r#"
     // 层 1：收窄共享状态 → 消除 race 根因
     // ❌ 多 task 通过 Arc<Mutex<>> 竞争写 counter
     let counter = Arc::new(Mutex::new(0));
@@ -1511,8 +1610,11 @@ pub fn print_section9_observability_testing() {
         }});
         // loom 会自动探索所有可能的线程交错顺序
     }}
-"#);
-    println!("  权衡：完全确定性调度（如 loom）只适用小范围；大系统靠 property testing + 大量迭代。");
+"#
+    );
+    println!(
+        "  权衡：完全确定性调度（如 loom）只适用小范围；大系统靠 property testing + 大量迭代。"
+    );
     println!("  泛化：用 `current_thread` runtime 减少线程交错；");
     println!("        用 `loom` 做低层并发原语的穷举测试；");
     println!("        业务层 race condition → 收窄共享状态 + channel 串行化关键路径。\n");
@@ -1529,7 +1631,9 @@ pub fn print_cheat_sheet() {
     println!("  长计算 / 阻塞 syscall              → spawn_blocking / rayon；勿占 executor");
     println!("  尾延迟抖动                         → 分 runtime、限并发、避免 async 内长临界区\n");
     println!("  【Send 与锁】");
-    println!("  跨 .await 持有状态                 → Arc + Send 或 LocalSet/单线程；忌 Rc 跨 await");
+    println!(
+        "  跨 .await 持有状态                 → Arc + Send 或 LocalSet/单线程；忌 Rc 跨 await"
+    );
     println!("  临界区含 .await                    → tokio::sync::Mutex 或 actor 模式\n");
     println!("  【取消与背压】");
     println!("  客户端消失仍干活                   → CancellationToken + select! + Drop guard");
@@ -1537,7 +1641,9 @@ pub fn print_cheat_sheet() {
     println!("  对外调用无超时                     → timeout() 包裹 + 指数退避 + 幂等键\n");
     println!("  【结构化并发】");
     println!("  spawn 后不 join                    → JoinSet/TaskTracker 收集；不允许错误黑洞");
-    println!("  select! 丢弃分支                   → 只 select cancel-safe Future；写操作 spawn 隔离");
+    println!(
+        "  select! 丢弃分支                   → 只 select cancel-safe Future；写操作 spawn 隔离"
+    );
     println!("  大扇出请求                         → Semaphore 限并发 + buffer_unordered 流式\n");
     println!("  【Future 性能】");
     println!("  async fn 状态机过大                → 大缓冲用 Vec；局部量缩短跨 await 作用域");

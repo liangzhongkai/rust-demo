@@ -1,0 +1,63 @@
+fail_fast: false
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.3.0
+    hooks:
+      - id: check-byte-order-marker
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+  - repo: https://github.com/psf/black
+    rev: 22.10.0
+    hooks:
+      - id: black
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: rustfmt (staged)
+        description: Check rustfmt on staged Rust files only (avoids whole-workspace churn).
+        entry: rustfmt
+        language: rust
+        types: [rust]
+        args: [--check]
+      - id: cargo-deny
+        name: cargo deny check
+        description: Check cargo dependencies (needs cargo-deny; run manually)
+        entry: bash -c 'cargo deny check -d'
+        language: rust
+        files: \.rs$
+        args: []
+        stages: [manual]
+      - id: typos
+        name: typos
+        description: check typo (needs typos-cli; run manually)
+        entry: bash -c 'typos'
+        language: rust
+        files: \.*$
+        pass_filenames: false
+        stages: [manual]
+      - id: cargo-check
+        name: cargo check
+        description: Check the package for errors.
+        entry: bash -c 'cargo check --all'
+        language: rust
+        files: \.rs$
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy
+        description: Lint rust sources (warnings allowed; use CI for -D warnings if needed)
+        entry: bash -c 'cargo clippy --all-targets --all-features --tests --benches'
+        language: rust
+        files: \.rs$
+        pass_filenames: false
+      - id: cargo-test
+        name: cargo test (compile only)
+        description: Ensure test targets compile (avoids nextest and flaky runtime tests)
+        entry: bash -c 'cargo test --workspace --all-features --no-run'
+        language: rust
+        files: \.rs$
+        pass_filenames: false
