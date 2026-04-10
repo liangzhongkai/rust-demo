@@ -54,4 +54,16 @@ mod tests {
 
         Ok(())
     }
+
+    /// Input: UTF-8 plaintext in memory — standard Base64 encode then decode roundtrip.
+    #[test]
+    fn test_process_encode_decode_roundtrip_standard() -> Result<()> {
+        let plaintext = "hello, 世界";
+        let mut enc_in = std::io::Cursor::new(plaintext.as_bytes().to_vec());
+        let encoded = process_encode(&mut enc_in, Base64Format::Standard)?;
+        let mut dec_in = std::io::Cursor::new(encoded.into_bytes());
+        let decoded = process_decode(&mut dec_in, Base64Format::Standard)?;
+        assert_eq!(decoded, plaintext);
+        Ok(())
+    }
 }

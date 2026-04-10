@@ -54,6 +54,7 @@ fn verify_path(path: &str) -> Result<PathBuf, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn test_verify_input_file() {
@@ -61,5 +62,26 @@ mod tests {
         assert_eq!(verify_file("*"), Err("File does not exist"));
         assert_eq!(verify_file("Cargo.toml"), Ok("Cargo.toml".into()));
         assert_eq!(verify_file("not-exist"), Err("File does not exist"));
+    }
+
+    #[test]
+    fn text_sign_parses_input_case() {
+        let opts = Opts::try_parse_from([
+            "rcli",
+            "text",
+            "sign",
+            "-i",
+            "Cargo.toml",
+            "-k",
+            "fixtures/blake3.txt",
+        ])
+        .expect("valid args");
+        match opts.cmd {
+            SubCommand::Text(TextSubCommand::Sign(opts)) => {
+                assert_eq!(opts.input, "Cargo.toml");
+                assert_eq!(opts.key, "fixtures/blake3.txt");
+            }
+            _ => panic!("expected text sign"),
+        }
     }
 }

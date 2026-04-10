@@ -44,3 +44,44 @@ pub fn process_genpass(
 
     Ok(String::from_utf8(password)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn contains_any(pwd: &str, alphabet: &[u8]) -> bool {
+        pwd.bytes().any(|b| alphabet.contains(&b))
+    }
+
+    /// Input: length 16, all character classes enabled — output length and coverage.
+    #[test]
+    fn genpass_input_all_classes_length_16() {
+        let pwd = process_genpass(16, true, true, true, true).expect("valid opts");
+        assert_eq!(pwd.len(), 16);
+        assert!(contains_any(&pwd, UPPER));
+        assert!(contains_any(&pwd, LOWER));
+        assert!(contains_any(&pwd, NUMBER));
+        assert!(contains_any(&pwd, SYMBOL));
+    }
+
+    /// Input: no symbols — password must not contain symbol alphabet.
+    #[test]
+    fn genpass_input_without_symbol() {
+        for _ in 0..32 {
+            let pwd = process_genpass(24, true, true, true, false).expect("valid opts");
+            assert_eq!(pwd.len(), 24);
+            assert!(
+                !pwd.bytes().any(|b| SYMBOL.contains(&b)),
+                "unexpected symbol in: {pwd}"
+            );
+        }
+    }
+
+    /// Input: numbers only — every byte is from NUMBER.
+    #[test]
+    fn genpass_input_numbers_only() {
+        let pwd = process_genpass(10, false, false, true, false).expect("valid opts");
+        assert_eq!(pwd.len(), 10);
+        assert!(pwd.bytes().all(|b| NUMBER.contains(&b)));
+    }
+}
