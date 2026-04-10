@@ -37,8 +37,13 @@ pub fn demonstrate() {
     let partial: i64 = handles.into_iter().map(|h| h.join().unwrap()).sum();
     let elapsed = t0.elapsed();
 
-    println!("  spawn+join 分块求和: sum={partial}, chunks={chunk_count}, {:?}", elapsed);
-    println!("  → 泛化：CPU 并行 = 切分数据 + 每块独立计算 + 归约；线程数对齐硬件，避免盲目 spawn。");
+    println!(
+        "  spawn+join 分块求和: sum={partial}, chunks={chunk_count}, {:?}",
+        elapsed
+    );
+    println!(
+        "  → 泛化：CPU 并行 = 切分数据 + 每块独立计算 + 归约；线程数对齐硬件，避免盲目 spawn。"
+    );
 
     // Panic 传播：子线程 panic 时 join 得到 Err
     let bad = thread::spawn(|| panic!("模拟某分片解析失败"));

@@ -10,10 +10,7 @@ use std::sync::{Arc, Weak};
 pub fn demonstrate() {
     let resource = Arc::new("expensive-db-handle".to_string());
     let cache_slot: Weak<String> = Arc::downgrade(&resource);
-    println!(
-        "  缓存 Weak upgrade: {:?}",
-        cache_slot.upgrade().as_deref()
-    );
+    println!("  缓存 Weak upgrade: {:?}", cache_slot.upgrade().as_deref());
     drop(resource);
     println!(
         "  释放主体后 upgrade: {:?}（须回源或重建）",

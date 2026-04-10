@@ -1,9 +1,7 @@
 //! 将上述场景压缩成决策备忘（供 main 打印）
 
 pub fn print_decision_cheat_sheet() {
-    println!(
-        "\n  ┌─ 智能指针与共享策略备忘 ───────────────────────────────────"
-    );
+    println!("\n  ┌─ 智能指针与共享策略备忘 ───────────────────────────────────");
     println!("  │ 递归/大对象+单所有者     → Box；dyn Trait 胖指针也常配合 Box");
     println!("  │ 单线程多所有者+只读/共享 → Rc；可变 → Rc<RefCell<_>>（注意 panic 借用规则）");
     println!("  │ 跨线程共享所有权         → Arc；可变 → Mutex / RwLock / 原子（按争用选）");

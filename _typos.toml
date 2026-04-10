@@ -1,0 +1,12 @@
+# https://github.com/crate-ci/typos
+# Course / demo identifiers and false positives.
+
+[files]
+extend-exclude = [
+    "Cargo.lock",
+    "crates/01-rcli/fixtures/**",
+]
+
+[default.extend-words]
+# Intentional trait name in rcli course material (vs "Executor").
+Exector = "Exector"

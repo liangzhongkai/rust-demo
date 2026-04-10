@@ -38,7 +38,10 @@ fn load_config(path: &str) -> Result<serde_json::Value> {
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow!("missing or invalid `version` field in config"))?;
 
-    ensure!(version >= 2, "config version {version} is too old, need >= 2");
+    ensure!(
+        version >= 2,
+        "config version {version} is too old, need >= 2"
+    );
 
     Ok(config)
 }
@@ -52,7 +55,10 @@ fn validate_username(name: &str) -> Result<()> {
         bail!("username must not be empty");
     }
     if name.len() > 32 {
-        bail!("username `{name}` exceeds 32-char limit (got {})", name.len());
+        bail!(
+            "username `{name}` exceeds 32-char limit (got {})",
+            name.len()
+        );
     }
     if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         bail!("username `{name}` contains invalid characters");
@@ -70,17 +76,15 @@ fn find_user(id: u64) -> Result<String> {
     let raw = std::fs::read_to_string(&db_path)
         .with_context(|| format!("failed to load user record for id={id}"))?;
 
-    let record: serde_json::Value = serde_json::from_str(&raw)
-        .context("corrupted user record: invalid JSON")?;
+    let record: serde_json::Value =
+        serde_json::from_str(&raw).context("corrupted user record: invalid JSON")?;
 
     let name = record
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            AppError::UserNotFound {
-                id,
-                username: "<unknown>".into(),
-            }
+        .ok_or_else(|| AppError::UserNotFound {
+            id,
+            username: "<unknown>".into(),
         })
         .context("user record missing `name` field")?;
 
@@ -112,7 +116,10 @@ fn handle_with_downcast(result: Result<String>) {
                     AppError::UserNotFound { id, username } => {
                         eprintln!("  [RECOVERABLE] user not found: id={id}, name={username}");
                     }
-                    AppError::PermissionDenied { action, required_role } => {
+                    AppError::PermissionDenied {
+                        action,
+                        required_role,
+                    } => {
                         eprintln!("  [AUTH] denied `{action}`, need role `{required_role}`");
                     }
                     AppError::InvalidConfig { key, reason } => {
@@ -152,7 +159,9 @@ fn parse_id_list(input: &str) -> Result<Vec<u64>> {
 
 fn demonstrate_formatting() {
     let inner: Result<()> = Err(anyhow!("disk full"));
-    let outer: Result<()> = inner.context("failed to write cache").context("sync aborted");
+    let outer: Result<()> = inner
+        .context("failed to write cache")
+        .context("sync aborted");
     let err = outer.unwrap_err();
 
     println!("  Display   : {err}");

@@ -33,10 +33,7 @@ pub fn demonstrate() {
 
     let ga = ma.lock().unwrap();
     let gb = mb.lock().unwrap();
-    println!(
-        "    有序加锁后: A={}, B={}（总和应保持 300）",
-        *ga, *gb
-    );
+    println!("    有序加锁后: A={}, B={}（总和应保持 300）", *ga, *gb);
 }
 
 /// 始终先锁 `from` 再锁 `to`，两线程参数顺序一致 → 避免循环等待。

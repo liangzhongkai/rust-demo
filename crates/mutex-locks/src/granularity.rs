@@ -60,9 +60,6 @@ pub fn demonstrate() {
         "    粗锁 (同一把 Mutex 更新两个字段): ~{} ms（本机仅供参考）",
         coarse_ms
     );
-    println!(
-        "    细锁 (两字段分锁、线程交替写不同字段): ~{} ms",
-        fine_ms
-    );
+    println!("    细锁 (两字段分锁、线程交替写不同字段): ~{} ms", fine_ms);
     println!("    说明：数字随 CPU/调度变化；重点是「无关写能否并行」的结构性差异。");
 }

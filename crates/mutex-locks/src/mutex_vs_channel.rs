@@ -54,6 +54,8 @@ pub fn demonstrate() {
     h.join().unwrap();
     let mutex_total = *shared.lock().unwrap();
 
-    println!("    同一逻辑（累加 100 次）: channel 结果 = {channel_total}, mutex 结果 = {mutex_total}");
+    println!(
+        "    同一逻辑（累加 100 次）: channel 结果 = {channel_total}, mutex 结果 = {mutex_total}"
+    );
     println!("    对比维度：争用下的尾延迟、不变式复杂度、是否需背压 —— 而非谁绝对更快。");
 }

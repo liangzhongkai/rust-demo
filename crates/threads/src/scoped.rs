@@ -22,6 +22,9 @@ pub fn demonstrate() {
         (left.join().unwrap(), right.join().unwrap())
     });
 
-    println!("  scoped 并行 XOR 两半: left={:02x} right={:02x}", results.0, results.1);
+    println!(
+        "  scoped 并行 XOR 两半: left={:02x} right={:02x}",
+        results.0, results.1
+    );
     println!("  → 泛化：需要“短期并行 + 共享只读视图”时用 scoped；写共享状态仍需 Mutex 或通道。");
 }

@@ -39,10 +39,7 @@ pub enum DataStoreError {
     Redaction(String),
 
     #[error("invalid header (expected {expected:?}, found {found:?})")]
-    InvalidHeader {
-        expected: String,
-        found: String,
-    },
+    InvalidHeader { expected: String, found: String },
 
     #[error("unknown data store error")]
     Unknown,
@@ -92,15 +89,14 @@ impl ConfigError {
 }
 
 fn parse_port(raw: &str) -> Result<u16, ConfigError> {
-    raw.trim().parse::<u16>().map_err(|source| {
-        ConfigError::invalid_port(raw.trim().to_string(), source)
-    })
+    raw.trim()
+        .parse::<u16>()
+        .map_err(|source| ConfigError::invalid_port(raw.trim().to_string(), source))
 }
 
 fn read_port_from_file(path: &Path) -> Result<u16, ConfigError> {
-    let content = fs::read_to_string(path).map_err(|source| {
-        ConfigError::read_config_file(path.to_path_buf(), source)
-    })?;
+    let content = fs::read_to_string(path)
+        .map_err(|source| ConfigError::read_config_file(path.to_path_buf(), source))?;
 
     let raw = content
         .lines()
@@ -220,11 +216,13 @@ fn parse_order_line(line_no: usize, raw: &str) -> Result<(String, u64), ImportEr
             raw: raw.to_string(),
         })?;
 
-    let cents = cents.parse::<u64>().map_err(|source| ImportError::InvalidAmount {
-        line: line_no,
-        raw: cents.to_string(),
-        source,
-    })?;
+    let cents = cents
+        .parse::<u64>()
+        .map_err(|source| ImportError::InvalidAmount {
+            line: line_no,
+            raw: cents.to_string(),
+            source,
+        })?;
 
     Ok((order_id.to_string(), cents))
 }

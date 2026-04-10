@@ -18,46 +18,44 @@ repos:
   - repo: local
     hooks:
       - id: cargo-fmt
-        name: rustfmt (staged)
-        description: Check rustfmt on staged Rust files only (avoids whole-workspace churn).
-        entry: rustfmt
+        name: cargo fmt
+        description: Check rustfmt for the whole workspace (matches `cargo fmt`).
+        entry: bash -c 'cargo fmt --all -- --check'
         language: rust
-        types: [rust]
-        args: [--check]
+        pass_filenames: false
+        files: \.rs$
       - id: cargo-deny
         name: cargo deny check
-        description: Check cargo dependencies (needs cargo-deny; run manually)
-        entry: bash -c 'cargo deny check -d'
+        description: Policy check on dependencies (requires cargo-deny + deny.toml).
+        entry: bash -c 'cargo deny check'
         language: rust
-        files: \.rs$
-        args: []
-        stages: [manual]
+        pass_filenames: false
+        files: ^(Cargo\.(toml|lock)|deny\.toml|crates/.*/Cargo\.toml)$
       - id: typos
         name: typos
-        description: check typo (needs typos-cli; run manually)
+        description: Spell check (uses _typos.toml).
         entry: bash -c 'typos'
         language: rust
-        files: \.*$
         pass_filenames: false
-        stages: [manual]
+        files: \.(rs|md|toml|txt)$
       - id: cargo-check
         name: cargo check
-        description: Check the package for errors.
+        description: Check the workspace for errors.
         entry: bash -c 'cargo check --all'
         language: rust
         files: \.rs$
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
-        description: Lint rust sources (warnings allowed; use CI for -D warnings if needed)
+        description: Lint Rust sources (warnings allowed).
         entry: bash -c 'cargo clippy --all-targets --all-features --tests --benches'
         language: rust
         files: \.rs$
         pass_filenames: false
       - id: cargo-test
-        name: cargo test (compile only)
-        description: Ensure test targets compile (avoids nextest and flaky runtime tests)
-        entry: bash -c 'cargo test --workspace --all-features --no-run'
+        name: cargo nextest
+        description: Run workspace tests (requires cargo-nextest).
+        entry: bash -c 'cargo nextest run --workspace --all-features'
         language: rust
         files: \.rs$
         pass_filenames: false

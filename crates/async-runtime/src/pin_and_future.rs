@@ -146,13 +146,22 @@ async fn demo_recursive_async() {
             Node {
                 val: 2,
                 children: vec![
-                    Node { val: 4, children: vec![] },
-                    Node { val: 5, children: vec![] },
+                    Node {
+                        val: 4,
+                        children: vec![],
+                    },
+                    Node {
+                        val: 5,
+                        children: vec![],
+                    },
                 ],
             },
             Node {
                 val: 3,
-                children: vec![Node { val: 6, children: vec![] }],
+                children: vec![Node {
+                    val: 6,
+                    children: vec![],
+                }],
             },
         ],
     };

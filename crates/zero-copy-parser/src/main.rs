@@ -490,7 +490,8 @@ mod tests {
 
     #[test]
     fn test_binary_parser() {
-        let data = [0x01, 0x00, 0x00, 0x04, 0xD2, 0x00, 0x02, 0x00, 0x02];
+        // u8=1, u32_le=1234 (0x4D2), u16_le=2
+        let data = [0x01, 0xD2, 0x04, 0x00, 0x00, 0x02, 0x00];
         let mut parser = BinaryParser::new(&data);
         assert_eq!(parser.read_u8(), Some(0x01));
         assert_eq!(parser.read_u32_le(), Some(1234));

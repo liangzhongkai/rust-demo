@@ -14,7 +14,10 @@ enum IntList {
 pub fn demonstrate() {
     let list = IntList::Cons(
         1,
-        Box::new(IntList::Cons(2, Box::new(IntList::Cons(3, Box::new(IntList::Nil))))),
+        Box::new(IntList::Cons(
+            2,
+            Box::new(IntList::Cons(3, Box::new(IntList::Nil))),
+        )),
     );
     let sum = sum_list(&list);
     println!("  Box 递归链表求和: sum={sum}（单所有权，无共享）");

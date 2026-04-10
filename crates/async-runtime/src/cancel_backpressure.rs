@@ -23,7 +23,11 @@ async fn demo_backpressure() {
         for i in 0..20 {
             tx.send(i).await.unwrap(); // 满时挂起，等消费者腾出空间
             if (i + 1) % 5 == 0 {
-                println!("    生产者: 已发送 {} 条, 耗时 {:?}", i + 1, start.elapsed());
+                println!(
+                    "    生产者: 已发送 {} 条, 耗时 {:?}",
+                    i + 1,
+                    start.elapsed()
+                );
             }
         }
         println!("    生产者: 全部发完, {:?}", start.elapsed());

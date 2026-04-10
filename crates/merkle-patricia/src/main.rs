@@ -27,7 +27,8 @@ impl Nibbles {
     }
 
     fn common_prefix_len(&self, other: &Self) -> usize {
-        self.0.iter()
+        self.0
+            .iter()
             .zip(other.0.iter())
             .take_while(|(a, b)| a == b)
             .count()
@@ -179,8 +180,14 @@ fn main() {
 
     // 获取值
     println!("\nRetrieving values:");
-    println!("Key: account_0x1234, Value: {:?}", String::from_utf8_lossy(&trie.get(b"account_0x1234").unwrap_or_default()));
-    println!("Key: account_0x5678, Value: {:?}", String::from_utf8_lossy(&trie.get(b"account_0x5678").unwrap_or_default()));
+    println!(
+        "Key: account_0x1234, Value: {:?}",
+        String::from_utf8_lossy(&trie.get(b"account_0x1234").unwrap_or_default())
+    );
+    println!(
+        "Key: account_0x5678, Value: {:?}",
+        String::from_utf8_lossy(&trie.get(b"account_0x5678").unwrap_or_default())
+    );
 
     // 根哈希
     if let Some(root_hash) = trie.root_hash() {
@@ -230,9 +237,18 @@ fn main() {
     let get_time = start.elapsed();
 
     println!("Inserted {} items in {:?}", iterations, insert_time);
-    println!("Retrieved {} / {} items in {:?}", hits, iterations, get_time);
-    println!("Insert rate: {:.0} ops/sec", iterations as f64 / insert_time.as_secs_f64());
-    println!("Get rate: {:.0} ops/sec", iterations as f64 / get_time.as_secs_f64());
+    println!(
+        "Retrieved {} / {} items in {:?}",
+        hits, iterations, get_time
+    );
+    println!(
+        "Insert rate: {:.0} ops/sec",
+        iterations as f64 / insert_time.as_secs_f64()
+    );
+    println!(
+        "Get rate: {:.0} ops/sec",
+        iterations as f64 / get_time.as_secs_f64()
+    );
 }
 
 #[cfg(test)]

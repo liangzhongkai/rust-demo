@@ -33,8 +33,5 @@ pub fn demonstrate() {
         h.join().unwrap();
     }
 
-    println!(
-        "    最终计数 = {}（期望 4000）",
-        *total.lock().unwrap()
-    );
+    println!("    最终计数 = {}（期望 4000）", *total.lock().unwrap());
 }

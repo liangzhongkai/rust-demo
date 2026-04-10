@@ -5,8 +5,8 @@
 //! - `Arc<T>`：多消息共享同一分配，clone 只增引用计数；适合 **只读** 共享。要写需 `Arc<Mutex<T>>` 等，回到锁争用问题。
 //! - **泛化**：通道传的是「所有权转移」；大对象要么移一次、要么共享智能指针、要么传句柄（id）再查存储。
 
-use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 pub fn demonstrate() {

@@ -2,8 +2,8 @@
 //!
 //! 运行所有示例以全面理解所有权系统
 
-mod basics;
 mod advanced;
+mod basics;
 mod pitfalls;
 mod real_world;
 

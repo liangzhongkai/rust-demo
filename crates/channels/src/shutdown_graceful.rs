@@ -23,14 +23,12 @@ pub fn demonstrate() {
     h2.join().expect("h2");
     // 两个分支的 Sender 都已 drop
 
-    let worker = thread::spawn(move || {
-        loop {
-            match rx.recv() {
-                Ok(task) => println!("  worker: 执行任务 {task}"),
-                Err(_) => {
-                    println!("  worker: 所有 Sender 已关闭，退出");
-                    break;
-                }
+    let worker = thread::spawn(move || loop {
+        match rx.recv() {
+            Ok(task) => println!("  worker: 执行任务 {task}"),
+            Err(_) => {
+                println!("  worker: 所有 Sender 已关闭，退出");
+                break;
             }
         }
     });

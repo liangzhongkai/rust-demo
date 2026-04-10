@@ -23,9 +23,20 @@ struct Balance {
 /// 交易类型 - 枚举模式匹配
 #[derive(Debug, Clone)]
 enum Transaction {
-    Transfer { from: u64, to: u64, amount: u64 },
-    Swap { token_in: u64, token_out: u64, amount_in: u64 },
-    Arbitrage { path: Vec<u64>, min_profit: u64 },
+    Transfer {
+        from: u64,
+        to: u64,
+        amount: u64,
+    },
+    Swap {
+        token_in: u64,
+        token_out: u64,
+        amount_in: u64,
+    },
+    Arbitrage {
+        path: Vec<u64>,
+        min_profit: u64,
+    },
 }
 
 /// 模拟的世界状态
@@ -54,9 +65,27 @@ impl WorldState {
     fn new(gas_price: u64) -> Self {
         let mut balances = HashMap::new();
         // 初始化一些账户
-        balances.insert(1, Balance { eth: 1000, token: 500 });
-        balances.insert(2, Balance { eth: 1000, token: 0 });
-        balances.insert(3, Balance { eth: 1000, token: 1000 });
+        balances.insert(
+            1,
+            Balance {
+                eth: 1000,
+                token: 500,
+            },
+        );
+        balances.insert(
+            2,
+            Balance {
+                eth: 1000,
+                token: 0,
+            },
+        );
+        balances.insert(
+            3,
+            Balance {
+                eth: 1000,
+                token: 1000,
+            },
+        );
 
         Self {
             balances,
@@ -79,11 +108,18 @@ impl WorldState {
                 let from_bal = self.balances.get_mut(from).unwrap();
                 from_bal.eth -= amount;
 
-                self.balances.entry(*to).or_insert(Balance { eth: 0, token: 0 }).eth += amount;
+                self.balances
+                    .entry(*to)
+                    .or_insert(Balance { eth: 0, token: 0 })
+                    .eth += amount;
                 Ok(amount * self.gas_price / 100)
             }
 
-            Transaction::Swap { token_in, token_out, amount_in } => {
+            Transaction::Swap {
+                token_in,
+                token_out,
+                amount_in,
+            } => {
                 // 简化的 swap 逻辑
                 let account = self.balances.get_mut(token_in).ok_or("Account not found")?;
                 if account.token < *amount_in {
@@ -103,7 +139,10 @@ impl WorldState {
 
                 for &next in path.iter().skip(1) {
                     // 这里简化了套利逻辑
-                    let balance = self.balances.get(&current_account).copied()
+                    let balance = self
+                        .balances
+                        .get(&current_account)
+                        .copied()
                         .ok_or("Account not found")?;
 
                     profit += balance.eth as i64;
@@ -225,34 +264,56 @@ fn main() {
     let bundles = vec![
         Bundle {
             transactions: vec![
-                Transaction::Transfer { from: 1, to: 2, amount: 100 },
-                Transaction::Swap { token_in: 2, token_out: 1, amount_in: 50 },
+                Transaction::Transfer {
+                    from: 1,
+                    to: 2,
+                    amount: 100,
+                },
+                Transaction::Swap {
+                    token_in: 2,
+                    token_out: 1,
+                    amount_in: 50,
+                },
             ],
             revert_on_fail: true,
             min_profit: 10,
         },
         Bundle {
-            transactions: vec![
-                Transaction::Arbitrage {
-                    path: vec![1, 2, 3, 1],
-                    min_profit: 50,
-                },
-            ],
+            transactions: vec![Transaction::Arbitrage {
+                path: vec![1, 2, 3, 1],
+                min_profit: 50,
+            }],
             revert_on_fail: true,
             min_profit: 50,
         },
         Bundle {
             transactions: vec![
-                Transaction::Transfer { from: 2, to: 3, amount: 200 },
-                Transaction::Swap { token_in: 3, token_out: 2, amount_in: 100 },
+                Transaction::Transfer {
+                    from: 2,
+                    to: 3,
+                    amount: 200,
+                },
+                Transaction::Swap {
+                    token_in: 3,
+                    token_out: 2,
+                    amount_in: 100,
+                },
             ],
             revert_on_fail: false,
             min_profit: 5,
         },
         Bundle {
             transactions: vec![
-                Transaction::Transfer { from: 3, to: 1, amount: 500 },
-                Transaction::Swap { token_in: 1, token_out: 3, amount_in: 250 },
+                Transaction::Transfer {
+                    from: 3,
+                    to: 1,
+                    amount: 500,
+                },
+                Transaction::Swap {
+                    token_in: 1,
+                    token_out: 3,
+                    amount_in: 250,
+                },
             ],
             revert_on_fail: true,
             min_profit: 100,
@@ -269,7 +330,11 @@ fn main() {
         println!(
             "Bundle {}: {} | Profit: {} | Gas: {}",
             result.bundle_index,
-            if result.success { "✓ SUCCESS" } else { "✗ FAILED" },
+            if result.success {
+                "✓ SUCCESS"
+            } else {
+                "✗ FAILED"
+            },
             result.profit,
             result.gas_used
         );
@@ -278,7 +343,10 @@ fn main() {
     // 找到最佳 bundle
     println!("\n=== Best Bundle ===");
     if let Some(best) = searcher.find_best_bundle(&bundles) {
-        println!("Found profitable bundle with {} transactions", best.transactions.len());
+        println!(
+            "Found profitable bundle with {} transactions",
+            best.transactions.len()
+        );
         println!("Min profit requirement: {}", best.min_profit);
     } else {
         println!("No profitable bundle found");
@@ -294,22 +362,29 @@ fn main() {
 
     let start = Instant::now();
     // 串行版本
-    bundles.iter().enumerate().map(|(i, bundle)| {
-        let mut local_state = searcher.state.clone();
-        let mut success = true;
-        for tx in &bundle.transactions {
-            if local_state.execute_transaction(tx).is_err() {
-                success = false;
-                break;
+    bundles
+        .iter()
+        .enumerate()
+        .map(|(i, bundle)| {
+            let mut local_state = searcher.state.clone();
+            let mut success = true;
+            for tx in &bundle.transactions {
+                if local_state.execute_transaction(tx).is_err() {
+                    success = false;
+                    break;
+                }
             }
-        }
-        (i, success)
-    }).count();
+            (i, success)
+        })
+        .count();
     let serial_time = start.elapsed();
 
     println!("Parallel time: {:?}", parallel_time);
     println!("Serial time:   {:?}", serial_time);
-    println!("Speedup: {:.2}x", serial_time.as_nanos() as f64 / parallel_time.as_nanos() as f64);
+    println!(
+        "Speedup: {:.2}x",
+        serial_time.as_nanos() as f64 / parallel_time.as_nanos() as f64
+    );
 }
 
 #[cfg(test)]
@@ -319,7 +394,11 @@ mod tests {
     #[test]
     fn test_transfer_success() {
         let mut state = WorldState::new(20);
-        let tx = Transaction::Transfer { from: 1, to: 2, amount: 100 };
+        let tx = Transaction::Transfer {
+            from: 1,
+            to: 2,
+            amount: 100,
+        };
 
         assert!(state.execute_transaction(&tx).is_ok());
         assert_eq!(state.balances[&1].eth, 900);
@@ -329,7 +408,11 @@ mod tests {
     #[test]
     fn test_transfer_insufficient() {
         let mut state = WorldState::new(20);
-        let tx = Transaction::Transfer { from: 1, to: 2, amount: 10000 };
+        let tx = Transaction::Transfer {
+            from: 1,
+            to: 2,
+            amount: 10000,
+        };
 
         assert!(state.execute_transaction(&tx).is_err());
     }
@@ -338,13 +421,15 @@ mod tests {
     fn test_parallel_simulation() {
         let state = WorldState::new(20);
         let searcher = MEVSearcher::new(state);
-        let bundles = vec![
-            Bundle {
-                transactions: vec![Transaction::Transfer { from: 1, to: 2, amount: 100 }],
-                revert_on_fail: true,
-                min_profit: 0,
-            },
-        ];
+        let bundles = vec![Bundle {
+            transactions: vec![Transaction::Transfer {
+                from: 1,
+                to: 2,
+                amount: 100,
+            }],
+            revert_on_fail: true,
+            min_profit: 0,
+        }];
 
         let results = searcher.simulate_bundles_parallel(&bundles);
         assert_eq!(results.len(), 1);

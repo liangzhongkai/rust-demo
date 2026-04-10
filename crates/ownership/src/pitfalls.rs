@@ -213,7 +213,10 @@ pub fn pitfall_struct_update() {
     };
 
     println!("base: {:?}", base);
-    println!("modified: Config {{ host: \"{}\", port: 9090, debug: {} }}\n", base.host, base.debug);
+    println!(
+        "modified: Config {{ host: \"{}\", port: 9090, debug: {} }}\n",
+        base.host, base.debug
+    );
 }
 
 /// 陷阱8：在错误处理中丢失值

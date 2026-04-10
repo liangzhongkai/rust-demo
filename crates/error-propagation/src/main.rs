@@ -34,10 +34,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 enum BootstrapError {
     MissingPortConfig,
     ReadConfigFile { path: PathBuf, source: io::Error },
-    InvalidPort {
-        raw: String,
-        source: ParseIntError,
-    },
+    InvalidPort { raw: String, source: ParseIntError },
 }
 
 impl Display for BootstrapError {
@@ -67,10 +64,12 @@ impl Error for BootstrapError {
 }
 
 fn parse_port(raw: &str) -> Result<u16, BootstrapError> {
-    raw.trim().parse::<u16>().map_err(|source| BootstrapError::InvalidPort {
-        raw: raw.trim().to_string(),
-        source,
-    })
+    raw.trim()
+        .parse::<u16>()
+        .map_err(|source| BootstrapError::InvalidPort {
+            raw: raw.trim().to_string(),
+            source,
+        })
 }
 
 fn read_port_from_file(path: &Path) -> Result<u16, BootstrapError> {
@@ -178,15 +177,14 @@ fn validate_refund_request(req: &RefundRequest) -> Result<(), RefundError> {
         return Err(RefundError::Validation("order_id must not be empty".into()));
     }
     if req.cents == 0 {
-        return Err(RefundError::Validation("refund amount must be greater than 0".into()));
+        return Err(RefundError::Validation(
+            "refund amount must be greater than 0".into(),
+        ));
     }
     Ok(())
 }
 
-fn call_payment_gateway(
-    api_key: &str,
-    req: &RefundRequest,
-) -> Result<String, PaymentGatewayError> {
+fn call_payment_gateway(api_key: &str, req: &RefundRequest) -> Result<String, PaymentGatewayError> {
     if api_key != "live-secret-key" {
         return Err(PaymentGatewayError::Unauthorized);
     }
@@ -385,7 +383,10 @@ struct ImportedOrder {
 
 #[derive(Debug)]
 enum ImportError {
-    InvalidFormat { line: usize, raw: String },
+    InvalidFormat {
+        line: usize,
+        raw: String,
+    },
     InvalidAmount {
         line: usize,
         raw: String,
@@ -423,11 +424,13 @@ fn parse_order_line(line_no: usize, raw: &str) -> Result<ImportedOrder, ImportEr
             raw: raw.to_string(),
         })?;
 
-    let cents = cents.parse::<u64>().map_err(|source| ImportError::InvalidAmount {
-        line: line_no,
-        raw: cents.to_string(),
-        source,
-    })?;
+    let cents = cents
+        .parse::<u64>()
+        .map_err(|source| ImportError::InvalidAmount {
+            line: line_no,
+            raw: cents.to_string(),
+            source,
+        })?;
 
     Ok(ImportedOrder {
         order_id: order_id.to_string(),
@@ -443,9 +446,7 @@ fn import_orders_fail_fast(lines: &[&str]) -> Result<Vec<ImportedOrder>, ImportE
         .collect()
 }
 
-fn import_orders_collect_all(
-    lines: &[&str],
-) -> (Vec<ImportedOrder>, Vec<ImportError>) {
+fn import_orders_collect_all(lines: &[&str]) -> (Vec<ImportedOrder>, Vec<ImportError>) {
     let mut ok_orders = Vec::new();
     let mut errors = Vec::new();
 

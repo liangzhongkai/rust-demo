@@ -27,5 +27,7 @@ pub fn demonstrate_bounded_backpressure() {
     drop(tx);
     worker.join().unwrap();
 
-    println!("  → 泛化：有界队列 = 背压；无界 = 简单但易 OOM。生产常配合超时、丢弃策略或优先级队列。");
+    println!(
+        "  → 泛化：有界队列 = 背压；无界 = 简单但易 OOM。生产常配合超时、丢弃策略或优先级队列。"
+    );
 }
