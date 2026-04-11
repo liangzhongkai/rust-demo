@@ -14,6 +14,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 /// Cache line 大小 (x86_64)
+#[allow(dead_code)]
 const CACHE_LINE_SIZE: usize = 64;
 
 /// 订单方向
@@ -217,7 +218,7 @@ impl OrderBook {
     }
 
     /// 在指定价格层级撮合
-    unsafe fn match_at_level(&self, level_ptr: *mut PriceLevel, mut qty: u32, side: Side) -> u32 {
+    unsafe fn match_at_level(&self, level_ptr: *mut PriceLevel, mut qty: u32, _side: Side) -> u32 {
         let level = &*level_ptr;
         let mut order_ptr = level.orders_head.load(Ordering::Acquire);
 
@@ -353,7 +354,7 @@ impl OrderBook {
                 }
 
                 // CAS 失败，重试
-                drop(new_level);
+                let _ = new_level;
                 level_ptr = head.load(Ordering::Acquire);
                 prev = ptr::null_mut();
                 continue;
@@ -379,7 +380,7 @@ impl OrderBook {
                     return new_level;
                 }
 
-                drop(new_level);
+                let _ = new_level;
                 level_ptr = (*prev).next.load(Ordering::Acquire);
             }
         }
@@ -417,9 +418,7 @@ impl OrderBook {
     }
 
     /// 市价订单
-    fn market_order(&self, mut qty: u32, side: Side) -> (u32, u64) {
-        let mut filled = 0u32;
-        let mut value = 0u64;
+    fn market_order(&self, qty: u32, side: Side) -> (u32, u64) {
         let order_id = self.order_id_seq.fetch_add(1, Ordering::Relaxed);
 
         let order_ptr = self.arena.alloc(Order {
@@ -433,7 +432,8 @@ impl OrderBook {
 
         unsafe {
             let remaining = self.try_match(order_ptr, side);
-            filled = qty - remaining;
+            let mut filled = qty - remaining;
+            let mut value = 0u64;
 
             if side == Side::Buy {
                 let mut level_ptr = self.asks_head.load(Ordering::Acquire);
@@ -446,9 +446,9 @@ impl OrderBook {
                     level_ptr = level.next.load(Ordering::Acquire);
                 }
             }
-        }
 
-        (filled, value)
+            (filled, value)
+        }
     }
 }
 

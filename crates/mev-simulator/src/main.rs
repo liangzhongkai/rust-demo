@@ -30,6 +30,7 @@ enum Transaction {
     },
     Swap {
         token_in: u64,
+        #[allow(dead_code)]
         token_out: u64,
         amount_in: u64,
     },
@@ -117,7 +118,7 @@ impl WorldState {
 
             Transaction::Swap {
                 token_in,
-                token_out,
+                token_out: _,
                 amount_in,
             } => {
                 // 简化的 swap 逻辑
@@ -178,6 +179,7 @@ struct SimulationResult {
     success: bool,
     profit: i64,
     gas_used: u64,
+    #[allow(dead_code)]
     final_state: WorldState,
 }
 
@@ -210,7 +212,7 @@ impl MEVSearcher {
                 for tx in &bundle.transactions {
                     match local_state.execute_transaction(tx) {
                         Ok(gas) => total_gas += gas,
-                        Err(e) => {
+                        Err(_e) => {
                             if bundle.revert_on_fail {
                                 success = false;
                                 break;

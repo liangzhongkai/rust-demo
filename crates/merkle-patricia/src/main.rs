@@ -16,6 +16,7 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 struct Nibbles(Vec<u8>);
 
+#[allow(dead_code)] // full trie API kept for illustration
 impl Nibbles {
     fn from_bytes(bytes: &[u8]) -> Self {
         let mut nibbles = Vec::with_capacity(bytes.len() * 2);
@@ -143,6 +144,7 @@ struct StateDB {
 
 /// 账户状态
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Ethereum-like layout; fields used in tests / future extensions
 struct Account {
     nonce: u64,
     balance: u64,

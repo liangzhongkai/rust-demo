@@ -5,6 +5,8 @@
 extend-exclude = [
     "Cargo.lock",
     "crates/01-rcli/fixtures/**",
+    "crates/02-concurrency/CHANGELOG.md",
+    "crates/02-concurrency/docs/*",
 ]
 
 [default.extend-words]

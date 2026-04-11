@@ -9,12 +9,12 @@
 //!
 //! 适用场景：HFT 网络协议解析、FIX 协议、二进制协议、日志处理
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::BytesMut;
 use std::borrow::Cow;
 
 /// 使用 memchr 快速查找字节
 /// memchr 使用 SIMD 指令加速，比手动循环快 10-100 倍
-use memchr::{memchr, memchr2, memmem};
+use memchr::{memchr, memmem};
 
 /// FIX 消息类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,7 @@ impl From<u8> for FixMsgType {
 /// FIX 协议订单方向
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+#[allow(dead_code)]
 enum FixSide {
     Buy = b'1',
     Sell = b'2',
@@ -84,11 +85,11 @@ impl<'a> FixMessage<'a> {
         // 快速验证：检查必需的 tag
         // memchr 使用 SIMD 加速搜索
         let begin_string = memmem::find(input, b"8=FIX.4.2")?;
-        let checksum = memchr(b'=', &input[begin_string..])?;
+        let _checksum = memchr(b'=', &input[begin_string..])?;
 
         // 查找消息类型 (Tag 35)
         let msg_type_start = memmem::find(input, b"35=")?;
-        let msg_type_end = memchr(SOH, &input[msg_type_start..])?;
+        let _msg_type_end = memchr(SOH, &input[msg_type_start..])?;
         let msg_type_byte = input.get(msg_type_start + 3)?;
         let msg_type = FixMsgType::from(*msg_type_byte);
 
@@ -167,6 +168,7 @@ struct BinaryParser<'a> {
     position: usize,
 }
 
+#[allow(dead_code)]
 impl<'a> BinaryParser<'a> {
     fn new(data: &'a [u8]) -> Self {
         Self { data, position: 0 }
@@ -310,6 +312,7 @@ impl<'a> OrderBookSnapshot<'a> {
 
 /// Cow 使用示例：延迟复制
 /// 只有在需要修改时才复制数据
+#[allow(dead_code)]
 fn process_message_cow(msg: Cow<[u8]>) -> Cow<[u8]> {
     // 如果数据已经是拥有的，直接返回
     // 如果是借用的，检查是否需要修改
@@ -453,14 +456,12 @@ fn main() {
 
     // serde_json 解析 (作为对比，需要复制数据)
     let start = Instant::now();
-    let mut json_count = 0;
     pos = 0;
     while pos < test_data.len() {
         if let Some(msg_end) = memchr(0x01, &test_data[pos..]) {
             let msg_end = pos + msg_end + 1;
             // 模拟 JSON 转换开销
             let _s = String::from_utf8_lossy(&test_data[pos..msg_end]).to_string();
-            json_count += 1;
             pos = msg_end;
         } else {
             break;
