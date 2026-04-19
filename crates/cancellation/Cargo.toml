@@ -5,3 +5,5 @@ edition = "2021"
 
 license = "MIT OR Apache-2.0"
 [dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }

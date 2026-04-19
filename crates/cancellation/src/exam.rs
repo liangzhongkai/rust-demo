@@ -1,190 +1,649 @@
-//! Cancellation：生产向场景题、权衡与泛化策略
-//! 结构：生产场景 → 问题表现 → 改进方向 → 权衡 → 泛化
+//! 可运行的取消相关示例（Tokio + `tokio_util::sync::CancellationToken`）。
+//!
+//! 覆盖八类生产级场景：
+//! 1. 协作式取消的语义基线
+//! 2. 层次传播 + 结构化 supervision（`JoinSet`）
+//! 3. 副作用、回滚与 `DropGuard` 传播
+//! 4. 完成 vs 取消的单一终态
+//! 5. Cancel-safety：哪些 future 能安全放进 `select!`
+//! 6. `spawn_blocking` / CPU 密集型的协作取消
+//! 7. 优雅停机（宽限期 → 强制 abort）
+//! 8. 有界并发（`Semaphore`）+ 可取消的 permit 获取
 
-pub fn print_header() {
-    println!("=== Cancellation：场景题、Trade-off 与泛化策略 ===\n");
-    println!("说明：下列题目按「生产场景 → 典型失误 → 改进方向 → 权衡 → 泛化」组织。");
-    println!("可与 tokio::select!、CancellationToken、JoinHandle::abort 等 API 对照。\n");
-}
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{mpsc, Mutex, Notify, Semaphore};
+use tokio::task::JoinSet;
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
-// ────────────────────────────────────────────────────────────────────
-// 一、语义与心智模型
-// ────────────────────────────────────────────────────────────────────
+// ─── 一、语义与心智模型 ─────────────────────────────────────────
 
-pub fn print_section_1_semantics() {
+pub async fn run_section_1_semantics() {
     println!("────────── 一、语义与心智模型 ──────────\n");
-
-    println!("【题 1.1】微服务里「取消下游 HTTP」与「杀掉本地线程」是一回事吗？");
-    println!("  生产场景：上游请求超时，网关向本服务发取消信号；本服务正在 fan-out 三个下游。");
-    println!(
-        "  典型失误：以为 `task.abort()` 或 `drop(future)` 会像 SIGKILL 一样立刻停掉所有副作用。"
-    );
-    println!("  要点：Rust/Tokio 的取消本质是「协作式」—— Future 在 await 点才能被驱动停止；");
-    println!("        已提交的同步段、未挂钩的阻塞调用、fire-and-forget 的 spawn 可能继续跑。");
-    println!("  权衡：协作式取消实现简单、无数据竞争；强杀（进程级）简单但有全局副作用。");
-    println!("  泛化：任何「可中断工作」都要定义检查点（await、循环内 poll、显式 token）；");
-    println!(
-        "        把「停止计算」与「撤销已提交的副作用」分成两阶段（compensating transaction）。\n"
-    );
-
-    println!("【题 1.2】`drop` 一个 `JoinHandle` / 不再 poll 一个 Future，工作停了吗？");
-    println!(
-        "  生产场景：请求处理 Future 被上层超时丢弃，但内部 `tokio::spawn` 了写审计日志的任务。"
-    );
-    println!("  典型失误：认为父 Future 取消后，子任务自动全部取消。");
-    println!(
-        "  要点：`JoinHandle` 被 drop 时，默认 detached 任务仍运行；结构化并发（join/join_set）"
-    );
-    println!("        或显式 `abort`、或 `CancellationToken` 传播才能对齐生命周期。");
-    println!("  权衡：detach 灵活但难推理；强制 join 拖慢响应；token 传播需要库支持。");
-    println!("  泛化：子任务生命周期策略三选一：继承取消、必须跑完（fire-and-forget 明确文档）、");
-    println!("        或独立 SLA（单独队列）。\n");
-
-    println!("【题 1.3】`timeout` 与 `CancellationToken` 解决的是同一类问题吗？");
-    println!("  生产场景：用户关闭浏览器标签；运维滚动发布要排空连接。");
-    println!("  典型失误：到处 `tokio::time::timeout`，没有统一「关停」语义。");
-    println!("  要点：timeout 是「时间上限」；token 是「外部意图」—— 可组合、可层级、可测试。");
-    println!("  权衡：timeout 实现快；token 适合与 HTTP disconnect、SIGTERM、配置热更对齐。");
-    println!("  泛化：把「何时停止」建模为可组合信号（token OR timeout OR channel closed）。\n");
-}
-
-// ────────────────────────────────────────────────────────────────────
-// 二、传播、层次与结构化并发
-// ────────────────────────────────────────────────────────────────────
-
-pub fn print_section_2_propagation() {
-    println!("────────── 二、传播、层次与结构化并发 ──────────\n");
-
-    println!(
-        "【题 2.1】API 网关：一个请求触发 DB 查询 + 两个 gRPC + 缓存回填，任一失败要取消兄弟任务。"
-    );
-    println!("  生产场景：尾延迟敏感，不希望失败路径上其他 RPC 继续占用连接池与配额。");
-    println!("  典型失误：用 `try_join!` 只聚合错误，没有在第一个 Err 上取消其他 branch。");
-    println!(
-        "  改进方向：`tokio::select!` biased + token，或 `FuturesUnordered` + 首个 Err 后 cancel，"
-    );
-    println!("        或使用支持取消的客户端（带 deadline / 可中断 stream）。");
-    println!("  权衡：`try_join` 简洁但无「取消兄弟」；select 需手写；结构化并发 crate 增加依赖。");
-    println!("  泛化：Fan-out 默认策略：「失败即取消未完成的 peer」或「全部跑完再合并」—— 必须在");
-    println!("        API 设计里写清楚，并与资源池大小、计费模型一致。\n");
-
-    println!("【题 2.2】长连接服务：父连接 token 取消时，子任务（心跳、读循环、写队列）谁先停？");
-    println!("  生产场景：WebSocket 或 MQTT broker，一条连接上多个逻辑任务。");
-    println!("  典型失误：只停读循环，写队列仍往已关闭 socket 写，或对端已走导致半开。");
-    println!("  改进方向：单一 token 分叉；关停顺序：停止接受新写 → flush/drain → 关 fd；");
-    println!("        或统一 `GracefulShutdown` 状态机。");
-    println!("  权衡：顺序关停延迟略增；乱序可能产生日志噪音与错误码。");
-    println!("  泛化：有向无环的「关停依赖图」；把顺序写进 runbook 与监控（各阶段耗时）。\n");
-
-    println!("【题 2.3】批处理：MapReduce 式，1000 个分片，主机收到 SIGTERM 要在 30s 内尽量 checkpoint。");
-    println!("  生产场景：K8s preStop、Spot 实例回收。");
-    println!("  典型失误：收到信号立刻 `abort` 所有任务，无 checkpoint，从头重跑成本高。");
-    println!("  改进方向：两级信号——「停止接收新分片」+「当前分片尽力完成或保存中间态」；");
-    println!("        与外部协调（Kafka 位点、对象存储 multipart）。");
-    println!("  权衡：优雅关停延长占用资源；硬截止避免永远挂起。");
-    println!(
-        "  泛化：批处理取消 = min(外部 deadline, 内部幂等与 checkpoint 策略)，不是单一 abort。\n"
-    );
-}
-
-// ────────────────────────────────────────────────────────────────────
-// 三、资源、事务与副作用
-// ────────────────────────────────────────────────────────────────────
-
-pub fn print_section_3_side_effects() {
-    println!("────────── 三、资源、事务与副作用 ──────────\n");
-
-    println!("【题 3.1】请求取消时，已 `BEGIN` 的数据库事务必须怎样？");
-    println!("  生产场景：ORM 在 async 里开事务，客户端断开导致 Future 不再被 poll。");
-    println!("  典型失误：依赖 Drop 回滚——连接归还池时事务状态未定义；或泄漏长事务。");
-    println!("  改进方向：显式 `spawn` + timeout 的 rollback；或使用支持 cancel callback 的池；");
-    println!("        短事务 + 幂等写，使「重试」安全。");
-    println!("  权衡：每次取消都 rollback 增加负载；幂等设计前期成本高。");
-    println!(
-        "  泛化：「取消」不是免费—— 为每个持锁/持连接的操作定义释放路径（RAII + 显式协议）。\n"
-    );
-
-    println!("【题 3.2】上传大文件到对象存储：已传 80%，用户点取消，应如何处理？");
-    println!("  生产场景：分片上传、断点续传、计费按流量。");
-    println!("  典型失误：客户端停读，服务端仍读完 body，或孤儿 multipart 永远占配额。");
-    println!("  改进方向：检测对端关闭/HTTP reset；中止时 `AbortMultipartUpload`；");
-    println!("        生命周期规则（N 天后清理未完成 upload）。");
-    println!("  权衡：尽早检测取消减少带宽 vs 实现复杂度（各云 SDK 差异）。");
-    println!("  泛化：任何「跨边界的长时间操作」需要：取消检测点 + 远端清理协议 + 定期 GC。\n");
-
-    println!("【题 3.3】消息队列消费者：`process` 里 await 很慢，收到再平衡要尽快释放分区。");
-    println!("  生产场景：Kafka consumer 被 revoke，仍在处理中的消息若提交 offset 会丢或重复。");
-    println!("  典型失误：只 cancel 业务 task，未与 consumer 协议交互，导致重复消费风暴或停滞。");
-    println!(
-        "  改进方向：协作式：revoke 信号 → token cancel → 当前消息处理完或超时 → 同步提交策略；"
-    );
-    println!("        与「至少一次」语义文档一致。");
-    println!("  权衡：快释放分区 vs 处理完当前批；幂等消费端是长期解。");
-    println!("  泛化：取消与「外部系统契约」（offset、锁、租约）绑定，不能只看本地 task。\n");
-}
-
-// ────────────────────────────────────────────────────────────────────
-// 四、竞态、幂等与测试
-// ────────────────────────────────────────────────────────────────────
-
-pub fn print_section_4_races_testing() {
-    println!("────────── 四、竞态、幂等与测试 ──────────\n");
-
-    println!("【题 4.1】`cancelled` 与 `completed` 几乎同时到达，如何避免双重投递？");
-    println!("  生产场景：异步任务完成后要发通知；取消路径也要发「已取消」。");
-    println!("  典型失误：两个路径都 `send`，下游收到两次或顺序错乱。");
-    println!("  改进方向：单一状态机（Idle → Running → Done|Cancelled）；或 `tokio::sync::Notify`");
-    println!("        一次唤醒；幂等 token（request_id）。");
-    println!("  权衡：状态机啰嗦；单通道合并事件更清晰。");
-    println!("  泛化：完成/取消/超时是互斥终态—— 设计为单一出口（single writer to result）。\n");
-
-    println!("【题 4.2】如何测试「取消后不再访问已释放资源」？");
-    println!("  生产场景：unsafe 或 FFI 边界，取消后指针失效。");
-    println!("  典型失误：只测 happy path；取消路径在压力下才崩。");
-    println!("  改进方向：`tokio::time::pause` 控制时间；注入 token 在确定性时刻触发；");
-    println!("        Miri/loom 对同步结构；fuzz 取消点。");
-    println!("  权衡：确定性测试需要可注入时钟与 IO；loom 组合爆炸。");
-    println!("  泛化：可取消代码路径与主路径同等测试权重；把取消当作一等公民场景。\n");
-
-    println!("【题 4.3】跨语言 FFI：Rust async 取消时，C 库里的阻塞调用怎么办？");
-    println!("  生产场景：调用 legacy 压缩/加密库，内部无中断点。");
-    println!("  典型失误：在 async 任务里直接调阻塞 FFI，取消不了，占满 worker。");
-    println!("  改进方向：`spawn_blocking` + 可中断包装（若库支持）；进程隔离；");
-    println!("        或接受「取消=不等待完成」并记录泄漏风险。");
-    println!("  权衡：进程隔离最重但最干净；blocking 池增大延迟。");
-    println!("  泛化：取消能力取决于最慢的不可中断段—— 架构上要么缩短该段，要么隔离。\n");
-}
-
-// ────────────────────────────────────────────────────────────────────
-// 五、总表：Trade-off 与泛化速查
-// ────────────────────────────────────────────────────────────────────
-
-pub fn print_section_5_summary() {
-    println!("────────── 五、总表：Trade-off 与泛化速查 ──────────\n");
-
-    println!("| 维度           | 选项 A           | 选项 B           | 何时倾向 A / B |");
-    println!("|----------------|------------------|------------------|----------------|");
-    println!("| 取消模型       | 协作式 await     | 强杀进程/线程    | 正确性优先 / 运维止损 |");
-    println!("| 信号来源       | 超时             | Token/用户/运维  | 简单 SLA / 多维关停 |");
-    println!("| 子任务         | Detach           | Join/Abort       | 后台日志 / 须一致 |");
-    println!("| Fan-out 失败   | 取消兄弟         | 等全部返回       | 资源紧 / 要全量错误 |");
-    println!("| 数据面         | 尽快停读         | 事务回滚+清理    | 带宽 / 一致性     |");
-    println!("| 测试           | 仅 happy path    | 注入取消+时钟    | 演示 / 生产信心   |");
+    demo_cooperative_cancel_at_await().await;
     println!();
-
-    println!("泛化策略（可背）：");
-    println!("  1) 明确终态：完成 | 失败 | 取消 | 超时 —— 互斥，单一写入点。");
-    println!("  2) 分层 token：全局关停 → 连接级 → 请求级，避免全局一把锁。");
-    println!("  3) 副作用与取消配对：每个「提交」有对应的「补偿或幂等」。");
-    println!("  4) 不可取消段显式标注：FFI/阻塞/长计算 —— 隔离或缩短。");
-    println!("  5) 可观测：取消原因、阶段耗时、是否触发补偿 —— 否则线上黑盒。\n");
+    demo_join_handle_drop_is_not_abort().await;
+    println!();
+    demo_timeout_vs_cancellation_token().await;
 }
 
-pub fn print_all() {
-    print_header();
-    print_section_1_semantics();
-    print_section_2_propagation();
-    print_section_3_side_effects();
-    print_section_4_races_testing();
-    print_section_5_summary();
+/// 协作式取消：只在 `await` 边界停下；循环里需配合 `select!` 或轮询 token。
+async fn demo_cooperative_cancel_at_await() {
+    println!("【1.1】协作式取消：work 与 `child.cancelled()` 竞速\n");
+
+    let root = CancellationToken::new();
+    let child = root.child_token();
+
+    let worker = tokio::spawn(async move {
+        for step in 1..=5 {
+            tokio::select! {
+                // biased：先检查取消，避免 work 分支饿死 cancel。
+                biased;
+                _ = child.cancelled() => {
+                    println!("    work: 在 step {step} 附近收到取消，停止协作");
+                    return;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(120)) => {
+                    println!("    work: step {step}/5");
+                }
+            }
+        }
+        println!("    work: 全部完成（未收到取消）");
+    });
+
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    println!("    main: 350ms 后发出取消\n");
+    root.cancel();
+
+    worker.await.unwrap();
+    println!("\n    ↑ 取消不是「立刻杀掉线程」，而是在 await 点汇合后退出");
+}
+
+/// `JoinHandle` 被 `drop` 时任务变为 detached，默认不会停止。
+async fn demo_join_handle_drop_is_not_abort() {
+    println!("【1.2】`drop(JoinHandle)`：任务继续跑（除非显式 `abort`）\n");
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+    let handle = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        println!("    detached: 仍在运行（父句柄已 drop）");
+        let _ = tx.send(());
+    });
+
+    drop(handle);
+    println!("    main: 已 drop JoinHandle，等待 150ms…");
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    rx.await.unwrap();
+    println!("\n    ↑ 需要 `abort()` / token / 结构化 join 才能对齐生命周期");
+}
+
+/// `timeout` 是时间上限；`CancellationToken` 表达外部意图，二者可组合。
+async fn demo_timeout_vs_cancellation_token() {
+    println!("【1.3】`timeout`（上限）与 `token`（意图）组合在 `select!` 里\n");
+
+    let token = CancellationToken::new();
+
+    tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            println!("    分支: token 取消");
+        }
+        _ = tokio::time::sleep(Duration::from_millis(200)) => {
+            println!("    分支: 200ms 超时（模拟）");
+        }
+        _ = tokio::time::sleep(Duration::from_secs(10)) => {
+            println!("    分支: 长任务完成（本 demo 不会走到）");
+        }
+    }
+
+    println!("\n    ↑ 生产里常写成：`select! {{ biased; token, timeout, actual_work }}`");
+}
+
+// ─── 二、传播、层次与结构化并发 ───────────────────────────────
+
+pub async fn run_section_2_propagation() {
+    println!("────────── 二、传播：fan-out 失败则取消兄弟 ──────────\n");
+    demo_fanout_cancel_siblings().await;
+}
+
+/// 三个 peer 并行；任意一个报告失败后 `root.cancel()`，其余在下一个 await 点停下。
+/// 使用 `JoinSet` 做结构化 supervision：一次 `join_next` 循环吃完所有结果。
+async fn demo_fanout_cancel_siblings() {
+    println!("【2.1】三路子任务 + 子 token + `JoinSet`：一路 Err → 取消其余\n");
+
+    let root = CancellationToken::new();
+    let mut set: JoinSet<Result<char, String>> = JoinSet::new();
+
+    for id in ['A', 'B', 'C'] {
+        let child = root.child_token();
+        set.spawn(async move {
+            let ms: u64 = match id {
+                'A' => 100,
+                'B' => 220,
+                'C' => 400,
+                _ => 100,
+            };
+            tokio::select! {
+                biased;
+                _ = child.cancelled() => {
+                    println!("    peer {id}: ⛔ 被兄弟失败取消");
+                    Ok(id)
+                }
+                _ = tokio::time::sleep(Duration::from_millis(ms)) => {
+                    if id == 'B' {
+                        Err(format!("peer {id}: 下游 500"))
+                    } else {
+                        println!("    peer {id}: ✅ 成功");
+                        Ok(id)
+                    }
+                }
+            }
+        });
+    }
+
+    // 结构化聚合：第一条 Err 触发整棵子树取消，之后继续 drain。
+    let mut first_err: Option<String> = None;
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                if first_err.is_none() {
+                    println!("\n    orchestrator: 收到 {e}，取消整棵子树\n");
+                    first_err = Some(e);
+                    root.cancel();
+                }
+            }
+            Err(join_err) => {
+                // 任务 panic 或被 abort。
+                eprintln!("    orchestrator: join error = {join_err}");
+            }
+        }
+    }
+
+    println!(
+        "\n    ↑ `try_join!` 只聚合错误；`JoinSet` + 子 token = 第一错误立即省下游占用"
+    );
+}
+
+// ─── 三、资源、事务与副作用 ───────────────────────────────────
+
+pub async fn run_section_3_side_effects() {
+    println!("────────── 三、副作用：取消路径上的释放 / 回滚 ──────────\n");
+    demo_tx_guard_rollback_on_cancel().await;
+    println!();
+    demo_drop_guard_propagates_cancel().await;
+}
+
+struct TxGuard {
+    label: &'static str,
+    committed: bool,
+}
+
+impl TxGuard {
+    fn new(label: &'static str) -> Self {
+        println!("    {label}: BEGIN");
+        Self {
+            label,
+            committed: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+        println!("    {}: COMMIT", self.label);
+    }
+}
+
+impl Drop for TxGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            println!("    {}: ROLLBACK（Future 被 drop / 路径未提交）", self.label);
+        }
+    }
+}
+
+/// `select!` 输掉的分支被 drop → `TxGuard` 在未 `commit` 时自动回滚。
+async fn demo_tx_guard_rollback_on_cancel() {
+    println!("【3.1】Drop 里补偿：模拟事务守卫 + `select!` 取消分支\n");
+
+    let fast_ok = async {
+        let mut tx = TxGuard::new("tx-fast");
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        tx.commit();
+        "fast"
+    };
+
+    let slow_tx = async {
+        let mut tx = TxGuard::new("tx-slow");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        tx.commit();
+        "slow"
+    };
+
+    tokio::select! {
+        v = fast_ok => println!("    select 赢家: {v}"),
+        v = slow_tx => println!("    select 赢家: {v}"),
+    }
+
+    println!("\n    ↑ 真实系统里 Drop 回滚可能不够（async 释放需额外通道，见连接池）");
+}
+
+/// `DropGuard`：父 Future 被 drop 时自动 `cancel()` token，避免子任务泄漏。
+/// 生产模式：父 await 被 `select!`/`timeout` 取消时，子树能确定性地收到信号。
+async fn demo_drop_guard_propagates_cancel() {
+    println!("【3.2】`DropGuard`：父 Future 被 drop 时自动取消子 token\n");
+
+    let root = CancellationToken::new();
+    let child = root.child_token();
+
+    let child_task = tokio::spawn(async move {
+        child.cancelled().await;
+        println!("    child: 父 Future 被 drop → 我收到了取消");
+    });
+
+    let parent_work = async {
+        // guard 的存在期 = parent_work 的生命周期；
+        // 它被 drop 时 root.cancel() 必然触发，无论是正常退出还是被 select 淘汰。
+        let _guard = root.clone().drop_guard();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    };
+
+    // 父 Future 被 timeout 抛弃，drop 走 DropGuard。
+    let _ = timeout(Duration::from_millis(100), parent_work).await;
+    child_task.await.unwrap();
+    println!("\n    ↑ 结构化并发里，`DropGuard` 是「生命周期闭合」的最后一道保险");
+}
+
+// ─── 四、竞态、幂等与测试 ─────────────────────────────────────
+
+pub async fn run_section_4_races_testing() {
+    println!("────────── 四、完成 vs 取消：互斥终态 ──────────\n");
+    demo_single_terminal_state().await;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Terminal {
+    Running = 0,
+    Completed = 1,
+    Cancelled = 2,
+}
+
+/// 完成与取消只应有一个成功 `compare_exchange`，下游只消费一次。
+/// Ordering 选择：`AcqRel` 保证成功 CAS 前的写对其他线程可见；`Acquire` 用于失败分支读回最新值。
+async fn demo_single_terminal_state() {
+    println!("【4.1】`AtomicU8` 单一终态 + `Notify` 一次唤醒\n");
+
+    let state = Arc::new(AtomicU8::new(Terminal::Running as u8));
+    let notify = Arc::new(Notify::new());
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let s1 = state.clone();
+    let n1 = notify.clone();
+    let log1 = log.clone();
+    let completer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let won = s1
+            .compare_exchange(
+                Terminal::Running as u8,
+                Terminal::Completed as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok();
+        if won {
+            log1.lock().await.push("notify: completed".into());
+            // Notify 有 permit 语义：即便 `notified()` 尚未注册，也能唤醒下一个。
+            n1.notify_one();
+        } else {
+            log1.lock().await.push("complete: lost race".into());
+        }
+    });
+
+    let s2 = state.clone();
+    let n2 = notify.clone();
+    let log2 = log.clone();
+    let canceller = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let won = s2
+            .compare_exchange(
+                Terminal::Running as u8,
+                Terminal::Cancelled as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok();
+        if won {
+            log2.lock().await.push("notify: cancelled".into());
+            n2.notify_one();
+        } else {
+            log2.lock().await.push("cancel: lost race".into());
+        }
+    });
+
+    notify.notified().await;
+    completer.await.unwrap();
+    canceller.await.unwrap();
+
+    let entries = log.lock().await.clone();
+    for line in &entries {
+        println!("    {line}");
+    }
+
+    let terminal = state.load(Ordering::Acquire);
+    println!(
+        "\n    最终状态: {}",
+        match terminal {
+            x if x == Terminal::Completed as u8 => "Completed",
+            x if x == Terminal::Cancelled as u8 => "Cancelled",
+            _ => "Running",
+        }
+    );
+    println!("\n    ↑ 把「通知下游」放在同一 CAS 的成功分支，避免双重投递");
+}
+
+// ─── 五、Cancel-safety：哪些 future 能安全放进 select! ───────
+
+pub async fn run_section_5_cancel_safety() {
+    println!("────────── 五、Cancel-safety：丢弃分支 = 丢弃局部状态 ──────────\n");
+    demo_cancel_unsafe_partial_progress().await;
+    println!();
+    demo_cancel_safe_loop().await;
+}
+
+/// 反例：在 `select!` 的一个分支里累积状态，取消时整个 future 连同局部 `Vec` 一起被 drop。
+async fn demo_cancel_unsafe_partial_progress() {
+    println!("【5.1】反例：select 分支里累积状态 → 取消即丢数据\n");
+
+    let (tx, mut rx) = mpsc::channel::<u32>(8);
+    let token = CancellationToken::new();
+
+    // 生产者：慢慢喂 5 条消息。
+    let producer = tokio::spawn(async move {
+        for i in 0..5 {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            if tx.send(i).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    let tok_for_cancel = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(110)).await;
+        tok_for_cancel.cancel();
+    });
+
+    // 把累积塞进 select 分支：取消时 items 随 future 被 drop，数据全部丢失。
+    let collect_unsafe = async {
+        let mut items = Vec::new();
+        while let Some(x) = rx.recv().await {
+            items.push(x);
+            if items.len() == 5 {
+                break;
+            }
+        }
+        items
+    };
+
+    tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            println!("    ❌ 取消：累积在分支内的 Vec 随 future drop，进度归零");
+        }
+        items = collect_unsafe => {
+            println!("    ✅ 完成：{items:?}");
+        }
+    }
+
+    producer.abort();
+    let _ = producer.await;
+}
+
+/// 正例：把累积状态抬到 `select!` 之外，每次只 await 一个 **cancel-safe** 的 future（`mpsc::recv`）。
+async fn demo_cancel_safe_loop() {
+    println!("【5.2】正例：状态放 select 之外，每次只 await 一个 cancel-safe 动作\n");
+
+    let (tx, mut rx) = mpsc::channel::<u32>(8);
+    let token = CancellationToken::new();
+
+    let producer = tokio::spawn(async move {
+        for i in 0..5 {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            if tx.send(i).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    let tok_for_cancel = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(110)).await;
+        tok_for_cancel.cancel();
+    });
+
+    let mut items: Vec<u32> = Vec::new();
+    loop {
+        tokio::select! {
+            biased;
+            _ = token.cancelled() => break,
+            maybe = rx.recv() => match maybe {
+                Some(x) => {
+                    items.push(x);
+                    if items.len() == 5 {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+    }
+    println!("    ✅ 即便中途被取消，已收集部分仍保留：{items:?}");
+
+    producer.abort();
+    let _ = producer.await;
+
+    println!(
+        "\n    ↑ 规则：`mpsc::recv` / `Notify::notified` / `CancellationToken::cancelled` \n       是 cancel-safe；自写的累积 future 通常不是。把状态抬出分支"
+    );
+}
+
+// ─── 六、spawn_blocking 与 CPU 密集型协作取消 ────────────────
+
+pub async fn run_section_6_spawn_blocking() {
+    println!("────────── 六、`spawn_blocking` 的协作取消 ──────────\n");
+    demo_blocking_cooperative_cancel().await;
+}
+
+/// `tokio::task::spawn_blocking` 里没有 async 调度点，`cancelled().await` 不适用。
+/// 用 `token.is_cancelled()`（原子 load）在热循环里周期性检查。
+async fn demo_blocking_cooperative_cancel() {
+    println!("【6.1】CPU 密集型循环里每 N 次迭代检查一次 `is_cancelled()`\n");
+
+    let token = CancellationToken::new();
+    let token_in_blocking = token.clone();
+
+    // 模拟一个 CPU-bound 计算。
+    let handle = tokio::task::spawn_blocking(move || {
+        let mut sum: u64 = 0;
+        // 粒度：每 1M 次迭代检查一次。粒度决定响应性 vs 检查开销的平衡。
+        const CHECK_EVERY: u64 = 1 << 20;
+        for i in 0..u64::MAX {
+            if i & (CHECK_EVERY - 1) == 0 && token_in_blocking.is_cancelled() {
+                return (sum, i);
+            }
+            sum = sum.wrapping_add(i);
+        }
+        (sum, u64::MAX)
+    });
+
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    println!("    main: 发出取消");
+    token.cancel();
+
+    let (sum, iters) = handle.await.unwrap();
+    println!(
+        "    blocking: 协作退出 @ iters={iters}，部分累加={sum}"
+    );
+    println!(
+        "\n    ↑ `JoinHandle::abort()` 对 spawn_blocking 无效；必须让代码主动轮询取消标志"
+    );
+}
+
+// ─── 七、优雅停机：宽限期 → 强制 abort ───────────────────────
+
+pub async fn run_section_7_graceful_shutdown() {
+    println!("────────── 七、优雅停机（graceful → forced）──────────\n");
+    demo_graceful_shutdown_with_deadline().await;
+}
+
+/// 典型信号处理：`cancel()` 广播停机 → 给宽限期 drain → 超过死线 `abort_all()`。
+async fn demo_graceful_shutdown_with_deadline() {
+    println!("【7.1】cancel + 宽限期 + 超时兜底 abort_all\n");
+
+    let token = CancellationToken::new();
+    let mut set: JoinSet<String> = JoinSet::new();
+
+    // 三个「守规矩」的 worker：收到取消后 flush 不同时长再退。
+    for id in 0..3u64 {
+        let c = token.child_token();
+        set.spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = c.cancelled() => {
+                        // 模拟 drain：持久化、回放 buffer 等。
+                        let drain_ms = 120 + 80 * id;
+                        tokio::time::sleep(Duration::from_millis(drain_ms)).await;
+                        return format!("worker-{id} drained in {drain_ms}ms");
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                }
+            }
+        });
+    }
+
+    // 一个「不守规矩」的 worker：忽略 token，只能被强杀。
+    set.spawn(async move {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        "misbehaving finished (should not happen in this demo)".to_string()
+    });
+
+    // 模拟 ctrl-c。
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    println!("    signal: SIGTERM → cancel() 广播停机");
+    token.cancel();
+
+    let grace = Duration::from_millis(400);
+    let drain = async {
+        while let Some(joined) = set.join_next().await {
+            match joined {
+                Ok(msg) => println!("    ↳ {msg}"),
+                Err(e) if e.is_cancelled() => println!("    ↳ (aborted)"),
+                Err(e) => println!("    ↳ join error: {e}"),
+            }
+        }
+    };
+
+    match timeout(grace, drain).await {
+        Ok(()) => println!("\n    ✅ 全部在宽限期内 drain 完成"),
+        Err(_) => {
+            println!(
+                "\n    ⚠ 宽限期 {}ms 超时，强制 abort_all() 清场",
+                grace.as_millis()
+            );
+            set.abort_all();
+            while let Some(joined) = set.join_next().await {
+                match joined {
+                    Ok(msg) => println!("    ↳ late: {msg}"),
+                    Err(e) if e.is_cancelled() => println!("    ↳ aborted"),
+                    Err(e) => println!("    ↳ join error: {e}"),
+                }
+            }
+            println!("    ✅ 强制停机完成");
+        }
+    }
+}
+
+// ─── 八、有界并发 + 可取消的 permit 获取 ─────────────────────
+
+pub async fn run_section_8_bounded_concurrency() {
+    println!("────────── 八、Semaphore 有界并发 + 可取消 permit ──────────\n");
+    demo_bounded_concurrency_cancel().await;
+}
+
+/// 排队等 permit 本身是一个 await 点。如果 `acquire().await` 不套 `select!`，
+/// 则取消期间大量任务仍会排到信号量再原路返回，浪费调度。
+async fn demo_bounded_concurrency_cancel() {
+    println!("【8.1】max_in_flight=3，10 个任务，100ms 后取消\n");
+
+    let sem = Arc::new(Semaphore::new(3));
+    let token = CancellationToken::new();
+    let mut set: JoinSet<String> = JoinSet::new();
+
+    for id in 0..10u32 {
+        let sem = sem.clone();
+        let child = token.child_token();
+        set.spawn(async move {
+            // 取 permit 的阶段也要可取消，避免取消后仍然排队。
+            let permit = tokio::select! {
+                biased;
+                _ = child.cancelled() => {
+                    return format!("task-{id:02}: cancelled before permit");
+                }
+                p = sem.acquire_owned() => match p {
+                    Ok(p) => p,
+                    Err(_) => return format!("task-{id:02}: semaphore closed"),
+                }
+            };
+
+            // 做工过程中也要可取消；permit 在作用域结束时 drop 自动归还。
+            let outcome = tokio::select! {
+                biased;
+                _ = child.cancelled() => format!("task-{id:02}: cancelled mid-work"),
+                _ = tokio::time::sleep(Duration::from_millis(120)) => {
+                    format!("task-{id:02}: done")
+                }
+            };
+            drop(permit);
+            outcome
+        });
+    }
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    println!("    orchestrator: 100ms 后 cancel()\n");
+    token.cancel();
+
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(msg) => println!("    {msg}"),
+            Err(e) => eprintln!("    join error: {e}"),
+        }
+    }
+
+    println!("\n    ↑ 规则：`acquire().await` 放进 `select!`；permit 靠作用域 Drop 归还");
+}
+
+// ─── 全部 ─────────────────────────────────────────────────────
+
+pub async fn run_all_sections() {
+    println!("=== Cancellation：可运行示例（按章节）===\n");
+    run_section_1_semantics().await;
+    println!("\n{}\n", "=".repeat(60));
+    run_section_2_propagation().await;
+    println!("\n{}\n", "=".repeat(60));
+    run_section_3_side_effects().await;
+    println!("\n{}\n", "=".repeat(60));
+    run_section_4_races_testing().await;
+    println!("\n{}\n", "=".repeat(60));
+    run_section_5_cancel_safety().await;
+    println!("\n{}\n", "=".repeat(60));
+    run_section_6_spawn_blocking().await;
+    println!("\n{}\n", "=".repeat(60));
+    run_section_7_graceful_shutdown().await;
+    println!("\n{}\n", "=".repeat(60));
+    run_section_8_bounded_concurrency().await;
 }
