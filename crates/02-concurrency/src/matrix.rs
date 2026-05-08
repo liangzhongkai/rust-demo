@@ -9,6 +9,7 @@ use std::{
 
 const NUM_THREADS: usize = 4;
 
+// [[1, 2], [1, 2], [1, 2]] => [1, 2, 1, 2, 1, 2]
 pub struct Matrix<T> {
     data: Vec<T>,
     row: usize,
@@ -37,7 +38,7 @@ where
     T: Copy + Default + Add<Output = T> + AddAssign + Mul<Output = T> + Send + 'static,
 {
     if a.col != b.row {
-        return Err(anyhow!("Matrix multiplication error: a.col != b.row"));
+        return Err(anyhow!("Matrix multiply error: a.col != b.row"));
     }
 
     let senders = (0..NUM_THREADS)
@@ -59,10 +60,12 @@ where
         })
         .collect::<Vec<_>>();
 
+    // generate 4 threads which receive msg and do dot product
     let matrix_len = a.row * b.col;
     let mut data = vec![T::default(); matrix_len];
     let mut receivers = Vec::with_capacity(matrix_len);
 
+    // map/reduce: map phase
     for i in 0..a.row {
         for j in 0..b.col {
             let row = Vector::new(&a.data[i * a.col..(i + 1) * a.col]);
@@ -82,6 +85,7 @@ where
             receivers.push(rx);
         }
     }
+
     // map/reduce: reduce phase
     for rx in receivers {
         let output = rx.recv()?;
