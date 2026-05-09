@@ -36,6 +36,7 @@ impl AmapMetrics {
 }
 
 impl Clone for AmapMetrics {
+    /// Shallow clone: same as `Arc::clone` — all clones share one map and the same atomics.
     fn clone(&self) -> Self {
         AmapMetrics {
             data: Arc::clone(&self.data),
