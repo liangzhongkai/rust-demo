@@ -1,3 +1,4 @@
+//! Unsafe Rust crate 二进制入口。
 fn main() {
-    println!("TODO: implement unsafe-rust examples");
+    unsafe_rust::run_all_demos();
 }
