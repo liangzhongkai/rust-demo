@@ -1,0 +1,16 @@
+[build-system]
+requires = ["maturin>=1.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ffi_demo"
+version = "0.1.0"
+description = "PyO3 shim for the ffi demo crate (import ffi_rust)"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.maturin]
+# Built from crates/ffi; run `maturin develop` / `maturin build` from this directory.
+features = ["pyo3"]
+# Rust package is named `ffi`; Python import must be a valid identifier (no `-`).
+module-name = "ffi_rust"
