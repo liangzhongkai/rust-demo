@@ -10,13 +10,14 @@
 |------|------|------|
 | **ownership** | ✅ 完成 | 包含基础、进阶、陷阱、实战四大模块，共 30+ 示例 |
 | **iterators** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
+| **parsing** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | 项目结构 | ✅ 完成 | Workspace 配置，36 个主题占位符 |
 
 ### 待完成
 
-34 个主题 crate 待实现，按优先级排序：
+33 个主题 crate 待实现，按优先级排序：
 - 第一阶段（核心基础）: borrowing, lifetimes, trait-system, generics
-- 其他 30 个主题
+- 其他 29 个主题
 
 ## 项目结构
 
