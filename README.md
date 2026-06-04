@@ -11,6 +11,7 @@
 | **ownership** | ✅ 完成 | 包含基础、进阶、陷阱、实战四大模块，共 30+ 示例 |
 | **iterators** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | **parsing** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
+| **networking** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | 项目结构 | ✅ 完成 | Workspace 配置，36 个主题占位符 |
 
 ### 待完成
