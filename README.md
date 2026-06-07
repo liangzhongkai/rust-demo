@@ -13,11 +13,12 @@
 | **parsing** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | **networking** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | **file-io** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
+| **zero-cost** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | 项目结构 | ✅ 完成 | Workspace 配置，36 个主题占位符 |
 
 ### 待完成
 
-32 个主题 crate 待实现，按优先级排序：
+31 个主题 crate 待实现，按优先级排序：
 - 第一阶段（核心基础）: borrowing, lifetimes, trait-system, generics
 - 其他 29 个主题
 
@@ -167,7 +168,7 @@ cargo build --release -p ownership
 
 | 主题 | 说明 | 关键概念 |
 |------|------|----------|
-| **zero-cost** | 零成本抽象 | 内联、单态化 |
+| **zero-cost** | 零成本抽象 | 内联、单态化、静态分派 |
 | **inline-caching** | 内联缓存 | 缓存友好性 |
 | **simd** | SIMD 向量化 | portable_simd, packed_simd |
 | **profile-optimization** | 性能分析 | perf, flamegraph, criterion |
