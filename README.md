@@ -14,11 +14,12 @@
 | **networking** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | **file-io** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | **zero-cost** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
+| **simd** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | 项目结构 | ✅ 完成 | Workspace 配置，36 个主题占位符 |
 
 ### 待完成
 
-31 个主题 crate 待实现，按优先级排序：
+30 个主题 crate 待实现，按优先级排序：
 - 第一阶段（核心基础）: borrowing, lifetimes, trait-system, generics
 - 其他 29 个主题
 

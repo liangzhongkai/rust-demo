@@ -10,8 +10,6 @@
 
 #![allow(dead_code)]
 
-use crate::util;
-
 // ============================================================================
 // 1. Lane 宽度与数据类型映射
 // ============================================================================
@@ -36,7 +34,7 @@ pub mod explicit_vs_auto {
 
     /// 显式 SIMD：行为确定，不依赖 LLVM heuristics。
     pub fn count_positive_explicit(data: &[i32]) -> usize {
-        util::count_above_i32(data, 0)
+        crate::util::count_above_i32(data, 0)
     }
 
     pub fn demonstrate() {
@@ -56,7 +54,7 @@ pub mod explicit_vs_auto {
 pub mod horizontal_reduce {
     pub fn demonstrate() {
         let prices: Vec<f64> = (0..10_000).map(|i| 100.0 + (i % 7) as f64 * 0.01).collect();
-        let total = util::sum_f64(&prices);
+        let total = crate::util::sum_f64(&prices);
         println!("## 3. 水平归约");
         println!("10k prices sum = {total:.2}");
         println!("垂直：lane 内并行 add；水平：lane 间 shuffle + add");
@@ -71,7 +69,7 @@ pub mod fma_dot {
     pub fn demonstrate() {
         let qty: Vec<f64> = (1..=1024).map(|i| i as f64).collect();
         let px: Vec<f64> = qty.iter().map(|&q| 100.0 + q * 0.001).collect();
-        let notional = util::dot_f64(&px, &qty);
+        let notional = crate::util::dot_f64(&px, &qty);
         println!("## 4. FMA 融合乘加 dot(px, qty)");
         println!("notional = {notional:.2}");
         println!("_mm256_fmadd_pd：一次指令完成 mul+add，精度与两次 round 不同\n");
@@ -87,8 +85,8 @@ pub mod memcmp_simd {
         let mut b = a;
         b[31] = 0xac;
         println!("## 5. 32-byte SIMD 比较");
-        println!("equal = {}", util::bytes_eq_32(&a, &a));
-        println!("diff last byte = {}", util::bytes_eq_32(&a, &b));
+        println!("equal = {}", crate::util::bytes_eq_32(&a, &a));
+        println!("diff last byte = {}", crate::util::bytes_eq_32(&a, &b));
         println!("Web3 topic/hash 过滤、HFT 固定长帧 magic 校验复用此模式\n");
     }
 }
@@ -99,9 +97,16 @@ pub mod memcmp_simd {
 pub mod feature_detect {
     pub fn demonstrate() {
         println!("## 6. Runtime Feature Detection");
-        println!("avx2_available = {}", util::avx2_available());
+        println!("avx2_available = {}", crate::util::avx2_available());
         println!("生产：启动时检测 → 函数指针表 / ifun 缓存 / 多版本 binary");
         println!("云部署：baseline CPU feature flag 与 build target 对齐\n");
+    }
+}
+
+/// 供 hft/strategies/pitfalls 引用的 i64 规约入口。
+pub mod lanes {
+    pub fn sum_simd(data: &[i64]) -> i64 {
+        crate::util::sum_i64(data)
     }
 }
 

@@ -67,7 +67,8 @@ pub mod best_price_scan {
 
         for chunk in chunks {
             let v = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
-            acc = _mm256_max_epi64(acc, v);
+            let mask = _mm256_cmpgt_epi64(v, acc);
+            acc = _mm256_blendv_epi8(acc, v, mask);
         }
 
         let mut buf = [i64::MIN; 4];
@@ -112,21 +113,10 @@ pub mod batch_vwap {
             .sum()
     }
 
-    pub fn notional_simd(trades: &[Trade]) -> i128 {
-        let px: Vec<i64> = trades.iter().map(|t| t.px).collect();
-        let qty: Vec<i64> = trades.iter().map(|t| t.qty).collect();
-        dot_i64_simd(&px, &qty)
-    }
-
-    fn dot_i64_simd(a: &[i64], b: &[i64]) -> i128 {
-        assert_eq!(a.len(), b.len());
-        let mut sum = 0i128;
-        for (x, y) in a.iter().zip(b.iter()) {
-            sum += (*x as i128) * (*y as i128);
-        }
-        // 教学：完整 AVX2 i64 点积需 _mm256_mul_epu32 + 扩展；此处标量回退保证正确性
-        // 生产 crate（如 simdeez）提供 portable dot product
-        sum
+    pub fn notional_simd(trades: &[Trade]) -> f64 {
+        let px: Vec<f64> = trades.iter().map(|t| t.px as f64).collect();
+        let qty: Vec<f64> = trades.iter().map(|t| t.qty as f64).collect();
+        crate::util::dot_f64(&px, &qty)
     }
 
     pub fn demonstrate() {
@@ -138,9 +128,9 @@ pub mod batch_vwap {
             })
             .collect();
         let s = notional_scalar(&trades);
-        let simd = notional_simd(&trades);
+        let simd = notional_simd(&trades) as i128;
         assert_eq!(s, simd);
-        println!("标量 notional = {}，SIMD = {}", s, simd);
+        println!("标量 notional = {}，SIMD dot_f64 = {}", s, simd);
         println!("关键：px/qty 分离存储 → SoA 布局比 AoS 更易向量化\n");
     }
 }
@@ -175,8 +165,6 @@ pub mod fix_anchor_search {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.1")]
     unsafe fn find_substring_sse41(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        use std::arch::x86_64::*;
-
         let n = needle.len();
         let first = needle[0];
         let last = needle[n - 1];
@@ -259,7 +247,7 @@ pub mod rolling_sum {
     }
 
     pub fn window_sum_simd(window: &[i64]) -> i64 {
-        crate::basics::lanes::sum_simd(window)
+        crate::util::sum_i64(window)
     }
 
     pub struct RollingSum {
@@ -329,12 +317,20 @@ pub mod cross_venue_spread {
         min_spread_scalar(spreads)
     }
 
+    /// 跨所 mid 价差绝对值之和 —— `util::abs_diff_sum_i32` 热路径。
+    pub fn mid_divergence(a: &[i32], b: &[i32]) -> i64 {
+        crate::util::abs_diff_sum_i32(a, b)
+    }
+
     pub fn demonstrate() {
-        println!("## 场景 6：跨 venue 最小 spread");
+        println!("## 场景 6：跨 venue 最小 spread + mid 偏离");
         let spreads = [12, 8, 15, 6, 20, 9, 11, 7];
         let (idx, val) = min_spread_simd(&spreads).unwrap();
-        println!("最小 spread = {} @ venue#{}", val, idx);
-        println!("关键：venue 数固定且小 → 常可全载入一个 AVX2 寄存器\n");
+        let mids_a: Vec<i32> = (0..8).map(|i| 100_00 + i * 2).collect();
+        let mids_b: Vec<i32> = mids_a.iter().map(|&m| m + (idx as i32)).collect();
+        let div = mid_divergence(&mids_a, &mids_b);
+        println!("最小 spread = {} @ venue#{}，mid 偏离 L1 = {}", val, idx, div);
+        println!("关键：价差 min + abs_diff SIMD 是套利监控双件套\n");
     }
 }
 

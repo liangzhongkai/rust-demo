@@ -52,6 +52,37 @@ unsafe fn sum_f64_avx2(data: &[f64]) -> f64 {
     total
 }
 
+/// i64 数组求和：4-lane AVX2（`_mm256_add_epi64`）。
+pub fn sum_i64(data: &[i64]) -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if avx2_available() {
+            return unsafe { sum_i64_avx2(data) };
+        }
+    }
+    data.iter().sum()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn sum_i64_avx2(data: &[i64]) -> i64 {
+    use std::arch::x86_64::*;
+
+    let mut acc = _mm256_setzero_si256();
+    let mut chunks = data.chunks_exact(4);
+    for chunk in chunks.by_ref() {
+        let v = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+        acc = _mm256_add_epi64(acc, v);
+    }
+    let mut buf = [0i64; 4];
+    _mm256_storeu_si256(buf.as_mut_ptr() as *mut __m256i, acc);
+    let mut total: i64 = buf.iter().sum();
+    for &x in chunks.remainder() {
+        total += x;
+    }
+    total
+}
+
 /// i32 数组求和：8-lane AVX2。
 pub fn sum_i32(data: &[i32]) -> i64 {
     #[cfg(target_arch = "x86_64")]
@@ -279,6 +310,13 @@ unsafe fn horizontal_sum_i32x8(v: std::arch::x86_64::__m256i) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sum_i64_matches_scalar() {
+        let data: Vec<i64> = (0..137).collect();
+        let scalar: i64 = data.iter().sum();
+        assert_eq!(sum_i64(&data), scalar);
+    }
 
     #[test]
     fn sum_f64_matches_scalar() {

@@ -45,13 +45,24 @@ pub mod merkle_layer {
 
     pub fn combine_layer_simd(left: &[B256], right: &[B256]) -> Vec<B256> {
         assert_eq!(left.len(), right.len());
-        let mut out = Vec::with_capacity(left.len());
-        for (l, r) in left.iter().zip(right.iter()) {
-            out.push(xor32_simd(l, r));
-        }
-        out
+        left.iter()
+            .zip(right.iter())
+            .map(|(l, r)| hash64_simd(l, r))
+            .collect()
     }
 
+    /// hash(left||right) 教学替身：逐字节 `l[i] ^ r[i].wrapping_add(i)`。
+    fn hash64_simd(left: &B256, right: &B256) -> B256 {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx2") {
+                return hash64(left, right);
+            }
+        }
+        hash64(left, right)
+    }
+
+    /// 32B 并行 XOR（Merkle sibling 预处理的子步骤，不含 index-dependent add）。
     fn xor32_simd(a: &B256, b: &B256) -> B256 {
         #[cfg(target_arch = "x86_64")]
         {
@@ -80,14 +91,16 @@ pub mod merkle_layer {
     }
 
     pub fn demonstrate() {
-        println!("## 场景 1：Merkle 层并行 combine（32B XOR 向量化）");
+        println!("## 场景 1：Merkle 层并行 combine（hash64 批量）");
         let leaves: Vec<B256> = (0u8..8).map(|i| [i; 32]).collect();
         let (l, r) = leaves.split_at(4);
         let s = combine_layer_scalar(l, r);
         let simd = combine_layer_simd(l, r);
         assert_eq!(s, simd);
+        let xor_demo = xor32_simd(&l[0], &r[0]);
         println!("层节点数 = {}，首节点 hash 前缀 = 0x{}…", s.len(), hex8(&s[0]));
-        println!("关键：hash 前 XOR/拼接可 SIMD；Keccak 轮函数用专用库\n");
+        println!("32B XOR 子步骤首字节 = 0x{:02x}", xor_demo[0]);
+        println!("关键：完整 Keccak 用 sha3-asm；层间 combine 可 batch 调度\n");
     }
 }
 
@@ -108,24 +121,7 @@ pub mod topic_filter {
     }
 
     pub fn matches_simd(topic: &B256, expected: &B256) -> bool {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if std::arch::is_x86_feature_detected!("avx2") {
-                return unsafe { eq32_avx2(topic, expected) };
-            }
-        }
-        topic == expected
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2")]
-    unsafe fn eq32_avx2(a: &B256, b: &B256) -> bool {
-        use std::arch::x86_64::*;
-
-        let va = _mm256_loadu_si256(a.as_ptr() as *const __m256i);
-        let vb = _mm256_loadu_si256(b.as_ptr() as *const __m256i);
-        let cmp = _mm256_cmpeq_epi8(va, vb);
-        _mm256_movemask_epi8(cmp) as u32 == u32::MAX
+        crate::util::bytes_eq_32(topic, expected)
     }
 
     pub fn filter_logs_scalar(topics: &[B256], expected: &B256) -> usize {
@@ -133,7 +129,7 @@ pub mod topic_filter {
     }
 
     pub fn filter_logs_simd(topics: &[B256], expected: &B256) -> usize {
-        topics.iter().filter(|t| matches_simd(t, expected)).count()
+        crate::util::filter_topics_32(topics, expected).len()
     }
 
     pub fn demonstrate() {
@@ -206,16 +202,18 @@ pub mod rlp_length {
             .collect()
     }
 
-    pub fn find_string_starts_simd(buf: &[u8]) -> Vec<usize> {
-        find_string_starts_scalar(buf)
+    pub fn count_rlp_markers_simd(buf: &[u8]) -> usize {
+        // 0x80 是 RLP 短串/长串分界附近最常见的标记字节之一
+        crate::util::count_byte_eq(buf, 0x80)
     }
 
     pub fn demonstrate() {
         println!("## 场景 4：RLP 长度前缀边界扫描");
         let buf: Vec<u8> = vec![0x00, 0x85, 0x01, 0x02, 0x03, 0x04, 0x05, 0xc0, 0x80];
-        let starts = find_string_starts_simd(&buf);
-        println!("RLP string 起始偏移 = {:?}", starts);
-        println!("关键：范围比较可 `_mm256_cmpeq` + blend；变长解码仍要标量\n");
+        let starts = find_string_starts_scalar(&buf);
+        let marker_hits = count_rlp_markers_simd(&buf);
+        println!("RLP string 起始偏移 = {:?}，0x80 命中 = {}", starts, marker_hits);
+        println!("关键：`count_byte_eq` 32B 并行扫描；变长解码仍要标量\n");
     }
 }
 
@@ -226,8 +224,6 @@ pub mod rlp_length {
 ///
 /// **SIMD 套路**：3 次 Keccak 得 bit index，批量 AND 检查 bit vector。
 pub mod bloom_filter {
-    use super::*;
-
     pub struct Bloom {
         pub bits: Vec<u64>,
     }

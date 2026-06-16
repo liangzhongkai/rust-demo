@@ -1,206 +1,176 @@
 //! # SIMD 常见陷阱与诊断
 //!
-//! 生产事故里反复出现的 8 个「以为 vectorize、实际更慢或错误」的坑：
-//! - 现象（perf / 正确性里看到什么）
-//! - 根因（硬件/编译器/内存模型）
-//! - 修法（一行改法 + 风格预防）
+//! 生产事故里反复出现的 8 个 SIMD 陷阱：
+//! - 现象（监控/测试看到什么）
+//! - 根因（CPU/编译器/内存层面发生了什么）
+//! - 解决方案（修法 + 预防）
 
 #![allow(dead_code)]
 
-use crate::util;
-
 // ============================================================================
-// 陷阱 1：未做 runtime feature detect → SIGILL
+// 陷阱 1：未做特征检测 → SIGILL 崩溃
 // ============================================================================
+/// **现象**：本地 dev 机器正常，生产部分节点 crash（illegal instruction）。
+/// **根因**：`#[target_feature]` 函数在不含 AVX2 的 CPU 上被直接调用。
+/// **修法**：外层 `is_x86_feature_detected!` + 标量回退。
 pub mod missing_feature_detect {
+    pub fn safe_sum(data: &[i64]) -> i64 {
+        crate::util::sum_i64(data)
+    }
+
     pub fn demonstrate() {
-        println!("## 陷阱 1：缺少 Feature Detection");
-        println!("avx2_available = {}", util::avx2_available());
-        println!("现象：新 CPU 开发机 OK，老云主机 SIGILL crash");
-        println!("规则：`is_x86_feature_detected!` + scalar fallback 或分发函数指针\n");
+        println!("## 陷阱 1：缺少 CPU 特征检测");
+        let v = vec![1i64, 2, 3, 4];
+        println!("safe_sum = {}（含特征检测）", safe_sum(&v));
+        println!("规则：intrinsics 永远包在 `if is_x86_feature_detected!(...)` 里\n");
     }
 }
 
 // ============================================================================
-// 陷阱 2：AoS 布局阻碍 vectorize
+// 陷阱 2：对齐 load 踩未定义行为
 // ============================================================================
-pub mod aos_vs_soa {
+/// **现象**：偶发 segfault 或 silent data corruption。
+/// **根因**：对非 32B 对齐地址用 `_mm256_load_si256`（aligned load）。
+/// **修法**：不确定对齐时用 `_mm256_loadu_si256`，或 buffer `#[repr(align(32))]`。
+pub mod misaligned_load {
+    pub fn demonstrate() {
+        println!("## 陷阱 2：对齐 load 未定义行为");
+        let unaligned = [1i64, 2, 3, 4];
+        let ptr = unaligned.as_ptr() as usize;
+        println!("栈数组对齐 mod 32 = {}（可能 ≠ 0）", ptr % 32);
+        println!("规则：默认 `loadu`；只有 arena bump 保证对齐才 `load`\n");
+    }
+}
+
+// ============================================================================
+// 陷阱 3：尾部 remainder 忘记处理
+// ============================================================================
+/// **现象**：SIMD 结果与标量差几个元素；边界 case 单测失败。
+/// **根因**：`len % lane_width != 0` 时最后几个元素未参与计算。
+/// **修法**：`chunks_exact(N)` + `remainder()` 标量收尾。
+pub mod forgotten_tail {
+    pub fn sum_wrong(data: &[i64]) -> i64 {
+        let n = data.len() / 4 * 4;
+        data[..n].iter().sum() // ❌ 丢掉 tail
+    }
+
+    pub fn sum_correct(data: &[i64]) -> i64 {
+        data.iter().sum()
+    }
+
+    pub fn demonstrate() {
+        println!("## 陷阱 3：尾部 remainder 遗漏");
+        let v: Vec<i64> = (0..13).collect();
+        println!("错误 sum = {}，正确 = {}", sum_wrong(&v), sum_correct(&v));
+        println!("规则：`chunks_exact` 必配 `remainder()`\n");
+    }
+}
+
+// ============================================================================
+// 陷阱 4：AoS 布局阻碍向量化
+// ============================================================================
+/// **现象**：写了 SIMD 但 profiling 无加速。
+/// **根因**：`struct { px, qty }` 交错存储，load 需要 shuffle/gather。
+/// **修法**：热路径改 SoA（`Vec<Px>` + `Vec<Qty>`）或 struct-of-array crate。
+pub mod aos_layout {
     #[derive(Clone, Copy)]
-    pub struct Tick {
-        pub ts: u64,
-        pub px: i32,
-        pub qty: i32,
+    pub struct Trade {
+        pub px: i64,
+        pub qty: i64,
     }
 
-    pub fn sum_qty_aos(ticks: &[Tick]) -> i64 {
-        ticks.iter().map(|t| t.qty as i64).sum()
+    pub fn notional_aos(trades: &[Trade]) -> i128 {
+        trades
+            .iter()
+            .map(|t| (t.px as i128) * (t.qty as i128))
+            .sum()
     }
 
-    pub fn sum_qty_soa(px: &[i32], qty: &[i32]) -> i64 {
-        util::sum_i32(qty) as i64
+    pub fn notional_soa(px: &[i64], qty: &[i64]) -> i128 {
+        px.iter()
+            .zip(qty.iter())
+            .map(|(&p, &q)| (p as i128) * (q as i128))
+            .sum()
     }
 
     pub fn demonstrate() {
-        println!("## 陷阱 2：AoS vs SoA");
-        let ticks: Vec<Tick> = (0..128)
-            .map(|i| Tick {
-                ts: i,
-                px: 100,
-                qty: i as i32,
-            })
-            .collect();
-        let qty: Vec<i32> = ticks.iter().map(|t| t.qty).collect();
-        println!("AoS sum = {}", sum_qty_aos(&ticks));
-        println!("SoA sum = {}", sum_qty_soa(&[], &qty));
-        println!("规则：热路径字段抽成连续数组；AoS 仅冷路径/debug\n");
+        println!("## 陷阱 4：AoS vs SoA 布局");
+        let trades = vec![Trade { px: 100, qty: 10 }, Trade { px: 101, qty: 5 }];
+        let px: Vec<i64> = trades.iter().map(|t| t.px).collect();
+        let qty: Vec<i64> = trades.iter().map(|t| t.qty).collect();
+        assert_eq!(notional_aos(&trades), notional_soa(&px, &qty));
+        println!("SoA 让 px/qty 各自连续 → LLVM/SIMD 可直接 vectorize\n");
     }
 }
 
 // ============================================================================
-// 陷阱 3：内层分支杀死 auto-vectorization
+// 陷阱 5：手写 SIMD 比编译器慢
 // ============================================================================
-pub mod branch_in_inner_loop {
-    pub fn count_with_branch(data: &[i32], th: i32) -> usize {
-        let mut n = 0;
-        for &x in data {
-            if x > th {
-                n += 1;
-            }
-        }
-        n
-    }
-
-    pub fn count_simd(data: &[i32], th: i32) -> usize {
-        util::count_above_i32(data, th)
-    }
-
+/// **现象**：intrinsics 版本比 `-O3` 标量还慢。
+/// **根因**：循环太短、分支多、或 LLVM 已自动向量化且做了更优调度。
+/// **修法**：criterion benchmark；先 `-C target-cpu=native`，再决定是否手写。
+pub mod premature_simd {
     pub fn demonstrate() {
-        let data: Vec<i32> = (0..10_000).map(|i| (i % 100) as i32).collect();
-        let s = count_with_branch(&data, 50);
-        let v = count_simd(&data, 50);
-        println!("## 陷阱 3：内层分支");
-        println!("branch count={s} simd count={v}");
-        println!("规则：用 cmp+mask 替代 branch；或 `#[cold]` 分离 rare path\n");
+        println!("## 陷阱 5：过早手写 SIMD");
+        println!("流程：标量 → perf/flamegraph → 确认热点 → benchmark intrinsics");
+        println!("很多 sum/map 循环 LLVM 已自动向量化，手写反而更慢\n");
     }
 }
 
 // ============================================================================
-// 陷阱 4：忽略 tail epilogue → 越界或漏算
+// 陷阱 6：跨平台无回退
 // ============================================================================
-pub mod tail_epilogue {
-    pub fn sum_wrong(data: &[f64]) -> f64 {
-        // 错误示范：假设 len 总是 4 的倍数
-        let mut total = 0.0;
-        for chunk in data.chunks(4) {
-            if chunk.len() == 4 {
-                total += chunk.iter().sum::<f64>();
-            }
-        }
-        total
-    }
-
-    pub fn sum_correct(data: &[f64]) -> f64 {
-        util::sum_f64(data)
+/// **现象**：ARM CI 编译失败或运行时 panic。
+/// **根因**：硬编码 x86_64 intrinsics 无 `#[cfg(target_arch)]`。
+/// **修法**：`cfg` 分架构 + 标量 fallback；或用 `wide`/`simdeez` 抽象层。
+pub mod no_portable_fallback {
+    pub fn sum_portable(data: &[i64]) -> i64 {
+        crate::util::sum_i64(data)
     }
 
     pub fn demonstrate() {
-        let data: Vec<f64> = (0..17).map(|i| i as f64).collect();
-        let wrong = sum_wrong(&data);
-        let right = sum_correct(&data);
-        println!("## 陷阱 4：尾处理 epilogue");
-        println!("len=17 wrong={wrong} correct={right}");
-        println!("规则：`chunks_exact` + remainder 标量；或 padding sentinel\n");
+        println!("## 陷阱 6：跨平台无标量回退");
+        let v = vec![1, 2, 3, 4];
+        println!("portable sum = {}", sum_portable(&v));
+        println!("规则：`#[cfg(target_arch = \"x86_64\")]` + else 标量\n");
     }
 }
 
 // ============================================================================
-// 陷阱 5：f64 累加顺序 → 对账 1 ULP 差
+// 陷阱 7：SIMD scatter 写冲突
 // ============================================================================
-pub mod f64_associativity {
+/// **现象**：histogram 计数不准，多线程下更严重。
+/// **根因**：多 lane 同时写同一 bucket（gather/scatter 无 atomic）。
+/// **修法**：per-thread histogram → 合并；或标量 bucket 累加。
+pub mod scatter_conflict {
     pub fn demonstrate() {
-        let v = vec![0.1_f64; 10_000_000];
-        let s1: f64 = v.iter().take(5_000_000).sum::<f64>()
-            + v.iter().skip(5_000_000).sum::<f64>();
-        let s2 = util::sum_f64(&v);
-        println!("## 陷阱 5：f64 结合律");
-        println!("split sum vs simd sum delta = {:.2e}", (s1 - s2).abs());
-        println!("规则：财务 PnL 用 i64 定点；f64 对账允许 ε 或 Kahan sum\n");
+        println!("## 陷阱 7：SIMD scatter 写冲突");
+        println!("latency histogram 不能 naive `_mm256_i64scatter` 到共享 bucket");
+        println!("修法：thread-local buckets + reduce，或 AVX512 conflict detection\n");
     }
 }
 
 // ============================================================================
-// 陷阱 6：非连续 / 跨步访问
+// 陷阱 8：整数溢出与 SIMD 语义不一致
 // ============================================================================
-pub mod strided_access {
-    pub fn sum_every_k(data: &[i32], k: usize) -> i64 {
-        data.iter().step_by(k).map(|&x| x as i64).sum()
-    }
-
+/// **现象**：SIMD 版 sum 与标量 sum 在溢出时结果不同。
+/// **根因**：向量化改变累加顺序；i64 溢出 UB 或 wrapping 语义不同。
+/// **修法**：risk/finance 用 i128 累加器；或显式 `wrapping_add` + 相同顺序。
+pub mod overflow_semantics {
     pub fn demonstrate() {
-        let data: Vec<i32> = (0..1024).collect();
-        println!("## 陷阱 6：跨步访问");
-        println!("step_by(3) sum = {}", sum_every_k(&data, 3));
-        println!("规则：gather 指令慢；重构为 compact index 或 SoA 列\n");
-    }
-}
-
-// ============================================================================
-// 陷阱 7：冷路径也 SIMD → 代码膨胀
-// ============================================================================
-pub mod code_bloat {
-    pub fn cold_path_simd_overkill(data: &[f64]) -> f64 {
-        // 日终批处理 OK；若只在 startup 调一次则浪费 icache
-        util::sum_f64(data)
-    }
-
-    pub fn demonstrate() {
-        println!("## 陷阱 7：冷路径过度 SIMD");
-        let _ = cold_path_simd_overkill(&[1.0, 2.0]);
-        println!("规则：profile 证明热才手写 intrinsics；冷路径靠 auto-vec\n");
-    }
-}
-
-// ============================================================================
-// 陷阱 8：False sharing 与错误对齐假设
-// ============================================================================
-pub mod false_sharing {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    pub fn demonstrate() {
-        println!("## 陷阱 8：False Sharing");
-        let counters = [
-            AtomicU64::new(0),
-            AtomicU64::new(0),
-            AtomicU64::new(0),
-            AtomicU64::new(0),
-        ];
-        for c in &counters {
-            c.fetch_add(1, Ordering::Relaxed);
-        }
-        println!("4×AtomicU64 同 cache line → 多线程 ping-pong");
-        println!("规则：per-thread 累加 + 最后 merge；`#[repr(align(64))]` 隔离\n");
+        println!("## 陷阱 8：累加顺序与溢出");
+        println!("HFT 定点：中间结果用 i128；比较 SIMD/标量必须同一语义");
+        println!("规则：overflow test + property-based test 覆盖边界\n");
     }
 }
 
 pub fn demonstrate() {
     missing_feature_detect::demonstrate();
-    aos_vs_soa::demonstrate();
-    branch_in_inner_loop::demonstrate();
-    tail_epilogue::demonstrate();
-    f64_associativity::demonstrate();
-    strided_access::demonstrate();
-    code_bloat::demonstrate();
-    false_sharing::demonstrate();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::tail_epilogue::*;
-
-    #[test]
-    fn correct_sum_handles_tail() {
-        let data: Vec<f64> = (0..17).map(|i| i as f64).collect();
-        assert!((sum_correct(&data) - 136.0).abs() < 1e-9);
-        assert!((sum_wrong(&data) - 136.0).abs() > 1.0);
-    }
+    misaligned_load::demonstrate();
+    forgotten_tail::demonstrate();
+    aos_layout::demonstrate();
+    premature_simd::demonstrate();
+    no_portable_fallback::demonstrate();
+    scatter_conflict::demonstrate();
+    overflow_semantics::demonstrate();
 }
