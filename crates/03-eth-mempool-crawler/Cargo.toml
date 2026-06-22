@@ -1,0 +1,28 @@
+[package]
+name = "eth-mempool-crawler"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Ethereum P2P mempool crawler case study — mock pipeline + upstream reference"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0.97"
+clap = { version = "4.5.35", features = ["derive"] }
+tokio = { version = "1.44.2", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+serde = { version = "1.0.219", features = ["derive"] }
+dashmap = "6.1.0"
+rand = "0.8.5"
+
+# Mock pipeline uses alloy types (no full Reth node required)
+alloy-primitives = { version = "0.8", features = ["serde", "rand"] }
+
+[[example]]
+name = "mempool_flow"
+path = "examples/mempool_flow.rs"
+
+[[example]]
+name = "task_architecture"
+path = "examples/task_architecture.rs"

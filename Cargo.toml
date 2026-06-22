@@ -66,6 +66,7 @@ members = [
     # 案例
     "crates/01-rcli",
     "crates/02-concurrency",
+    "crates/03-eth-mempool-crawler",
 ]
 
 resolver = "2"
