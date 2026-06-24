@@ -15,6 +15,7 @@
 | **file-io** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | **zero-cost** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | **simd** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
+| **profile-optimization** | ✅ 完成 | basics + HFT 7 场景 + Web3 6 场景 + 8 陷阱 + 8 应对策略 |
 | 项目结构 | ✅ 完成 | Workspace 配置，36 个主题占位符 |
 | **03-eth-mempool-crawler** | ✅ 完成 | 基于 Reth 的以太坊 Mempool P2P 监听案例（mock 管道 + 上游 reference） |
 
