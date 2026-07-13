@@ -87,18 +87,49 @@ pub unsafe extern "C" fn demo_chain_session_destroy(h: ChainSessionHandle) {
     drop(Box::from_raw(h));
 }
 
+/// ❌ 陷阱：假定 C 已写满输出前就 `assume_init` / 读取 —— 演示用零初始化代替（浪费但安全）。
+///
+/// 对照 `sign_compact_stub`：真实 FFI 必须用 `MaybeUninit`，写满后再 `assume_init`。
+pub fn sign_compact_zeroed_wasteful(msg: &[u8]) -> Result<[u8; 64], ()> {
+    let mut out = [0u8; 64]; // ❌ 语义上「假装已初始化」；大缓冲浪费且易误导
+    let rc = unsafe { demo_crypto_dual_out(out.as_mut_ptr(), 64, msg.as_ptr(), msg.len()) };
+    if rc != 0 {
+        return Err(());
+    }
+    Ok(out)
+}
+
+/// ❌ 陷阱：创建 session 后忘记 `destroy` —— 裸指针是 `Copy`，`forget` 无效；泄漏来自未调用 destroy。
+pub fn session_create_and_leak(chain_id: u64, rpc_epoch: u64) {
+    let h = demo_chain_session_create(chain_id, rpc_epoch);
+    let _ = h; // ❌ 从不调用 demo_chain_session_destroy → Box 永驻堆上
+}
+
 pub fn demonstrate() {
-    println!("## Web3：签名／哈希 FFI —— MaybeUninit + 固定输出");
-    let sig = sign_compact_stub(b"hello rollup").expect("stub ok");
-    println!("compact-ish out 前 8 bytes = {:?}", &sig[..8].to_vec());
+    println!("## Web3：签名／哈希 FFI —— MaybeUninit vs 零初始化");
+    let msg = b"hello rollup";
+    let sig_ok = sign_compact_stub(msg).expect("stub ok");
+    let sig_trap = sign_compact_zeroed_wasteful(msg).expect("stub ok");
+    println!(
+        "  ✅ `MaybeUninit` 前 8 bytes = {:?}",
+        &sig_ok[..8].to_vec()
+    );
+    println!(
+        "  ❌ 零初始化栈数组前 8 bytes = {:?}（结果相同但语义错误、大输出浪费）",
+        &sig_trap[..8].to_vec()
+    );
+    assert_eq!(sig_ok, sig_trap);
 
     println!("## Web3：opaque session（into_raw / from_raw 成对）");
     let h = demo_chain_session_create(8453, 17);
     unsafe {
-        println!("chain_id = {}", (*h).chain_id);
+        println!("  ✅ create → chain_id = {}", (*h).chain_id);
         demo_chain_session_destroy(h);
+        println!("  ✅ destroy 一次，Box 回收");
     }
-    println!("session 已释放\n");
+    session_create_and_leak(1, 0);
+    println!("  ❌ `session_create_and_leak` 未调用 destroy → 堆上 Box 泄漏");
+    println!("规则：输出缓冲 `MaybeUninit`；handle `create`/`destroy` 文档化配对\n");
 }
 
 #[cfg(test)]

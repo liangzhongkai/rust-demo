@@ -45,18 +45,43 @@ where
     Ok(out)
 }
 
+/// ❌ 用户路径直接 `.unwrap()` —— 含 NUL 时 panic，错误推迟到运行时。
+fn path_to_cstring_trap(raw: &str) -> CString {
+    CString::new(raw).expect("path has no NUL — 不成立")
+}
+
+/// ❌ 无 deadline 的阻塞 FFI —— RPC hang 时调用方无限等待。
+fn ffi_blocking_no_deadline<F, T>(f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    f()
+}
+
 pub fn demonstrate() {
     println!("## 泛化策略：路径 → CString（失败显式）");
-    match path_to_cstring_lossy("safe/path/no-nul") {
-        Ok(cs) => println!("CString len = {}", cs.as_bytes().len()),
-        Err(_) => unreachable!(),
-    }
+    let safe = path_to_cstring_lossy("safe/path/no-nul").unwrap();
+    let trap_result = std::panic::catch_unwind(|| path_to_cstring_trap("bad\0path"));
+    println!("  ✅ 无 NUL → CString len = {}", safe.as_bytes().len());
+    println!(
+        "  ❌ `.unwrap()` 遇 `bad\\0path` → panic? {}",
+        trap_result.is_err()
+    );
     assert!(path_to_cstring_lossy("bad\0path").is_err());
-    println!("含 NUL 的路径被拒绝 —— 不把 UB 推迟到 C 侧\n");
+    println!("  ✅ `Result` 路径 → `Err(NulError)`，不把 UB 推迟到 C 侧\n");
 
     println!("## 泛化策略：FFI + deadline（示意）");
-    let ok = ffi_with_deadline(Duration::from_secs(1), || 42).unwrap();
-    println!("deadline 包裹返回值 = {}\n", ok);
+    let with_deadline = ffi_with_deadline(Duration::from_secs(1), || 42).unwrap();
+    let no_deadline = ffi_blocking_no_deadline(|| 42);
+    println!(
+        "  ✅ `ffi_with_deadline` 返回值 = {}",
+        with_deadline
+    );
+    println!(
+        "  ❌ `ffi_blocking_no_deadline` 返回值 = {}（无超时语义，RPC hang 时黑洞）",
+        no_deadline
+    );
+    println!();
 
     println!("## Review checklist（拷贝到 PR 模板）");
     println!(

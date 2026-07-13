@@ -97,20 +97,67 @@ pub fn vendor_scratch_words_for(bytes: usize) -> Option<usize> {
     Some(bytes / size_of::<u64>())
 }
 
+/// ❌ 跳过 Rust 边界校验，裸调 vendor —— 依赖 C 返回码兜底（更糟的 vendor 会直接 UB）。
+///
+/// 对照 `unpack_ticks_via_vendor`：生产里应把非法输入挡在 `unsafe` 块 **之前**。
+pub unsafe fn unpack_ticks_skip_rust_checks<'a>(
+    src: &[u8],
+    scratch: &'a mut [u64],
+) -> Result<&'a [u64], i32> {
+    let mut written = 0usize;
+    let rc = demo_vendor_unpack_ticks(
+        scratch.as_mut_ptr(),
+        scratch.len(),
+        src.as_ptr(),
+        src.len(),
+        &mut written,
+    );
+    if rc != 0 {
+        return Err(rc);
+    }
+    Ok(&scratch[..written])
+}
+
 pub fn demonstrate() {
-    println!("## HFT：vendor tick unpack（Rust 拥有 scratch）");
     let wire: Vec<u8> = [1u64, 2, 3]
         .into_iter()
         .flat_map(|x| x.to_le_bytes())
         .collect();
     let mut scratch = vec![0u64; 8];
-    let ticks = unpack_ticks_via_vendor(&wire, &mut scratch).expect("vendor ok");
-    println!("解码 ticks = {:?}", ticks);
 
-    println!("## HFT：scratch 过小 → 边界返回 Err（而非 UB）");
-    let tiny = &mut [0u64; 1];
-    assert!(unpack_ticks_via_vendor(&wire, tiny).is_err());
-    println!("过小 scratch 被拒绝\n");
+    println!("## HFT：vendor tick unpack（Rust 拥有 scratch）");
+    let ticks = unpack_ticks_via_vendor(&wire, &mut scratch).expect("vendor ok");
+    println!("  ✅ safe façade 解码 ticks = {:?}", ticks);
+
+    println!("## HFT：scratch 过小 —— 对照 trap vs safe");
+    let mut tiny_trap = [0u64; 1];
+    let trap_err = unsafe { unpack_ticks_skip_rust_checks(&wire, &mut tiny_trap) };
+    let mut tiny_safe = [0u64; 1];
+    let safe_err = unpack_ticks_via_vendor(&wire, &mut tiny_safe);
+    println!(
+        "  ✅ Rust 预检 → {:?}（`BufferTooSmall`，不调 `unsafe`）",
+        safe_err
+    );
+    println!(
+        "  ❌ 裸调 vendor → Err({})（靠 C 返回 -3；无校验的 vendor 会 UB）",
+        trap_err.unwrap_err()
+    );
+
+    println!("## HFT：对齐错误 —— 对照 trap vs safe");
+    let bad_wire = vec![0u8; 7]; // 非 8 字节倍数
+    let mut scratch2 = vec![0u64; 8];
+    let trap_align = unsafe { unpack_ticks_skip_rust_checks(&bad_wire, &mut scratch2) };
+    let mut scratch3 = vec![0u64; 8];
+    let safe_align = unpack_ticks_via_vendor(&bad_wire, &mut scratch3);
+    println!(
+        "  ✅ Rust 预检 → {:?}（`BadAlignment`）",
+        safe_align
+    );
+    println!(
+        "  ❌ 裸调 vendor → Err({})（C 侧 -2；仍不如边界早拒绝）",
+        trap_align.unwrap_err()
+    );
+    println!("规则：热路径复用 scratch；`unsafe` 收窄到单行 FFI 调用\n");
 }
 
 #[cfg(test)]
