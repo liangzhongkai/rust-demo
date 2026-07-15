@@ -1,6 +1,6 @@
 # File I/O 深度实践
 
-> BufRead、mmap、原子写、WAL —— 从 HFT/Web3 生产场景泛化到通用文件策略
+> BufRead、mmap、原子写、WAL、O_DIRECT、sendfile/splice —— 从 HFT/Web3 生产场景到 Linux 内核 I/O
 
 ## 模块
 
@@ -11,6 +11,7 @@
 | `web3.rs` | 6 个 Web3 场景（event 日志/ABI 缓存/快照/manifest/多链配置/reorg） |
 | `pitfalls.rs` | 8 个常见文件 I/O 陷阱 |
 | `strategies.rs` | 8 条泛化应对策略 + 反例 |
+| `linux_kernel_io.rs` | DMA/CPU copy、Buffer vs Direct IO、BIO/NIO、libaio、mmap/sendfile/splice 零拷贝 |
 
 ## 运行
 

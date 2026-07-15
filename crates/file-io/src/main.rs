@@ -9,6 +9,7 @@
 
 mod basics;
 mod hft;
+mod linux_kernel_io;
 mod pitfalls;
 mod strategies;
 mod web3;
@@ -30,4 +31,7 @@ fn main() {
 
     println!("--- 5. 泛化的应对策略 ---");
     strategies::demonstrate();
+
+    println!("--- 6. Linux 内核 I/O ---");
+    linux_kernel_io::demonstrate();
 }
