@@ -1,6 +1,6 @@
 //! Macros in Production: HFT & Web3 Scenarios
 //!
-//! 本 crate 只用标准库，聚焦"宏到底解决了哪些生产问题"，而不是语法玩具。
+//! 本 crate 以声明宏（§1–§5）+ 过程宏 crate `macros-proc`（§4/§6/§7）对照演示。
 //!
 //! 为什么 HFT 和 Web3 对宏依赖特别重：
 //! - HFT 追求**零成本抽象 + 编译期检查 + hot-path 可预测**，
@@ -12,13 +12,15 @@
 //!   §1  HFT  hot-path 日志与延迟探针（debug 有、release 零指令）
 //!   §2  HFT  FIX 字段声明式解析（tag -> 字段 -> struct 一把梭）
 //!   §3  HFT  金额/价格/数量 newtype（编译期阻止单位串台）
-//!   §4  HFT  branch hint（冷路径标注替代 nightly intrinsics::likely）
+//!   §4  HFT  branch hint（声明宏 unlikely! + 属性宏 #[cold_handler]）
 //!   §5  Web3 require! / revert!（Solidity 语义 → Rust Result）
-//!   §6  Web3 函数 selector 分派表（4 字节 → handler，编译期生成）
-//!   §7  Web3 事件 emit（字段名 + 顺序 + 类型在编译期固定）
+//!   §6  Web3 sol_dispatch!（编译期 keccak → selector 分派表）
+//!   §7  Web3 #[derive(EventJson)]（字段元信息 → to_json）
 //!   §8  泛化：三类宏、十条坑、五条选型策略
 
 use std::time::Instant;
+
+use macros_proc::{cold_handler, sol_dispatch, EventJson};
 
 // ---------------------------------------------------------------------------
 // §1. HFT hot-path 日志 / 延迟探针
@@ -215,7 +217,9 @@ fn notional(p: Price, q: Qty) -> Notional {
 //   LLVM 的 PGO 启发式会自动把冷路径挪到函数末尾，
 //   hot 路径变成直线代码，流水线友好。
 //
-// 这个"把冷路径抽函数"的动作写多了会忘记加属性，用宏固化它。
+// 这个"把冷路径抽函数"的动作写多了会忘记加属性：
+//   - 声明宏 `cold_path!` / `unlikely!` 适合 inline 表达式场景；
+//   - 属性宏 `#[cold_handler]`（macros-proc）适合独立 handler 函数。
 
 macro_rules! cold_path {
     ($body:block) => {{
@@ -237,9 +241,14 @@ macro_rules! unlikely {
     }};
 }
 
+#[cold_handler]
+fn cross_ask_risk_check(_incoming: Price) -> &'static str {
+    "RISK_HOLD"
+}
+
 fn match_quote(best_bid: Price, best_ask: Price, incoming: Price) -> &'static str {
     if unlikely!(incoming >= best_ask) {
-        "CROSS_ASK"           // 冷路径：穿越对手价，走风控
+        cross_ask_risk_check(incoming)
     } else if unlikely!(incoming <= best_bid) {
         "CROSS_BID"
     } else {
@@ -313,42 +322,22 @@ fn erc20_transfer(
 //     - 新增函数时忘了在 match 里加一条分支。
 //
 // 解决思路：
-//   把 `(selector, handler)` 的映射放在一个宏里一次声明，
-//   宏同时生成 `dispatch(selector, calldata)` 函数 + `SELECTORS` 常量表，
-//   调试 / fuzz 时可以遍历常量表。
+//   用过程宏 `sol_dispatch!` 声明 `signature => handler`，
+//   宏在**编译期**算 keccak256(signature)[..4]，生成
+//   `dispatch(selector, calldata)` + `SELECTORS` 常量表。
+//   人肉抄 selector 常量（声明宏常见做法）在这里被消除。
 //
-// 真正的生产代码（如 alloy-sol-macro）会在 proc-macro 里直接算 keccak，
-// 这里用固定常量做演示。
-
-#[allow(dead_code)]
-type Handler = fn(&[u8]) -> Result<Vec<u8>, VmError>;
-
-macro_rules! dispatch_table {
-    (
-        $( $sel:literal => $name:ident ),+ $(,)?
-    ) => {
-        /// 导出常量表，便于测试 / fuzz 遍历。
-        pub const SELECTORS: &[(u32, &str)] = &[
-            $( ($sel, stringify!($name)), )+
-        ];
-
-        pub fn dispatch(selector: u32, calldata: &[u8]) -> Result<Vec<u8>, VmError> {
-            match selector {
-                $( $sel => $name(calldata), )+
-                _ => Err(VmError::Unauthorized),
-            }
-        }
-    };
-}
+// 声明宏版 `dispatch_table! { 0xa9059cbb => transfer, ... }` 见 git 历史；
+// 生产代码（alloy-sol-macro）走的就是这条 proc-macro 路径。
 
 fn transfer(_cd: &[u8]) -> Result<Vec<u8>, VmError> { Ok(vec![1]) }
 fn approve(_cd: &[u8]) -> Result<Vec<u8>, VmError> { Ok(vec![2]) }
 fn transfer_from(_cd: &[u8]) -> Result<Vec<u8>, VmError> { Ok(vec![3]) }
 
-dispatch_table! {
-    0xa9059cbb_u32 => transfer,         // transfer(address,uint256)
-    0x095ea7b3_u32 => approve,          // approve(address,uint256)
-    0x23b872dd_u32 => transfer_from,    // transferFrom(address,address,uint256)
+sol_dispatch! {
+    transfer(address,uint256) => transfer,
+    approve(address,uint256) => approve,
+    transferFrom(address,address,uint256) => transfer_from,
 }
 
 // ---------------------------------------------------------------------------
@@ -360,53 +349,24 @@ dispatch_table! {
 //   如果"字段顺序"或"字段名"和链上 ABI 有偏差，下游整条 pipeline 崩。
 //
 // 解决思路：
-//   为每个 event 生成一个专用宏，**模式匹配字段名**，
-//   写错字段名会直接编译失败，而不是运行期才发现。
+//   用 derive 宏 `EventJson` 读取 struct 字段元信息，自动生成 `to_json()`。
+//   字段名 / 顺序由 struct 定义固定；写错字段名是 Rust 类型检查，不是宏模式匹配。
+//
+// 声明宏版 `define_event!` + `emit!` 要为每个 event 手写分支；
+// derive 宏新增字段只改 struct，impl 自动跟上。
 
-macro_rules! define_event {
-    ($name:ident { $( $field:ident : $ty:ty ),+ $(,)? }) => {
-        paste_like_emit!($name, $( ($field, $ty) ),+);
-    };
+#[derive(Debug, EventJson)]
+struct Transfer {
+    from: u64,
+    to: u64,
+    value: u64,
 }
 
-// 不依赖 `paste` crate，我们直接把 define + emit 合并在一个宏里：
-macro_rules! paste_like_emit {
-    ($name:ident, $( ($field:ident, $ty:ty) ),+) => {
-        #[derive(Debug)]
-        #[allow(dead_code)]
-        pub struct $name {
-            $( pub $field: $ty, )+
-        }
-
-        impl $name {
-            pub fn to_json(&self) -> String {
-                let mut s = String::from("{");
-                $(
-                    s.push_str(&format!(
-                        "\"{}\":\"{:?}\",",
-                        stringify!($field),
-                        self.$field
-                    ));
-                )+
-                s.pop(); // 去掉最后一个逗号
-                s.push('}');
-                s
-            }
-        }
-    };
-}
-
-define_event!(Transfer { from: u64, to: u64, value: u64 });
-define_event!(Approval { owner: u64, spender: u64, value: u64 });
-
-/// emit! 宏强制"字段名 + 顺序"，漏字段 / 写错名编译失败。
-macro_rules! emit {
-    (Transfer { from: $from:expr, to: $to:expr, value: $value:expr }) => {
-        Transfer { from: $from, to: $to, value: $value }
-    };
-    (Approval { owner: $owner:expr, spender: $spender:expr, value: $value:expr }) => {
-        Approval { owner: $owner, spender: $spender, value: $value }
-    };
+#[derive(Debug, EventJson)]
+struct Approval {
+    owner: u64,
+    spender: u64,
+    value: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -414,15 +374,13 @@ macro_rules! emit {
 // ---------------------------------------------------------------------------
 //
 // ── 三类宏 ────────────────────────────────────────────────────────────
-//   1. 声明宏 `macro_rules!`        ：本文件全部示例属于这类。
+//   1. 声明宏 `macro_rules!`        ：§1–§5 示例（hot_log / fix_message 等）。
 //                                    轻量、没有单独 crate，
 //                                    适合"形如 DSL"的简单变换。
-//   2. 过程宏 - derive              ：`#[derive(Serialize)]` 这种。
-//                                    需要独立 `proc-macro = true` crate。
+//   2. 过程宏 - derive              ：§7 `#[derive(EventJson)]`（crate `macros-proc`）。
 //                                    能读取 struct 字段元信息 → 生成 impl。
-//   3. 过程宏 - 属性 / 函数宏      ：`#[tokio::main]`、`sqlx::query!`、
-//                                    `alloy::sol!`。能做任意 token 变换，
-//                                    可以访问文件系统（sqlx 在编译期连数据库）。
+//   3. 过程宏 - 属性 / 函数宏      ：§4 `#[cold_handler]`、§6 `sol_dispatch!`。
+//                                    能做任意 token 变换；本 demo 在编译期算 keccak。
 //
 // ── 十条坑 ────────────────────────────────────────────────────────────
 //   1. 不用 `$crate::` 前缀 → 下游用户重命名 crate 时炸掉。
@@ -490,20 +448,20 @@ fn main() {
     assert_eq!(bad, Err(VmError::InsufficientBalance));
 
     println!("\n===== §6 Web3 selector dispatch =====");
-    for (sel, name) in SELECTORS {
+    for (sel, sig, name) in SELECTORS {
         let out = dispatch(*sel, &[]).unwrap();
-        println!("selector 0x{:08x} ({:<14}) → {:?}", sel, name, out);
+        println!("selector 0x{:08x} {sig} ({name}) → {:?}", sel, out);
     }
     let unknown = dispatch(0xdead_beef, &[]);
     println!("unknown selector → {:?}", unknown);
 
     println!("\n===== §7 Web3 emit event =====");
-    let ev = emit!(Transfer { from: 1, to: 2, value: 400 });
+    let ev = Transfer { from: 1, to: 2, value: 400 };
     println!("{}", ev.to_json());
-    let ev2 = emit!(Approval { owner: 1, spender: 3, value: 100 });
+    let ev2 = Approval { owner: 1, spender: 3, value: 100 };
     println!("{}", ev2.to_json());
-    // let bad = emit!(Transfer { frm: 1, to: 2, value: 400 });
-    // ^^^ 写错字段名（frm）→ 编译期直接失败，正是我们想要的
+    // let bad = Transfer { frm: 1, to: 2, value: 400 };
+    // ^^^ 写错字段名（frm）→ 编译期直接失败
 
     println!("\nAll scenarios done.");
 }

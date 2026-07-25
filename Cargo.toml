@@ -30,6 +30,7 @@ members = [
     "crates/closures",
     "crates/iterators",
     "crates/macros",
+    "crates/macros-proc",
     "crates/unsafe-rust",
     "crates/ffi",
 
